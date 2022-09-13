@@ -13,19 +13,13 @@ import java.math.RoundingMode;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.sql.*;
-import java.util.Calendar;
-import java.util.Map;
+import java.sql.Date;
+import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
-import org.mariadb.jdbc.client.Column;
-import org.mariadb.jdbc.client.Completion;
-import org.mariadb.jdbc.client.Context;
-import org.mariadb.jdbc.client.ReadableByteBuf;
+import org.mariadb.jdbc.Configuration;
+import org.mariadb.jdbc.client.*;
 import org.mariadb.jdbc.client.impl.StandardReadableByteBuf;
-import org.mariadb.jdbc.codec.BinaryRowDecoder;
-import org.mariadb.jdbc.codec.RowDecoder;
-import org.mariadb.jdbc.codec.TextRowDecoder;
 import org.mariadb.jdbc.export.ExceptionFactory;
-import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
 import org.mariadb.jdbc.message.server.ErrorPacket;
 import org.mariadb.jdbc.plugin.Codec;
 import org.mariadb.jdbc.plugin.codec.*;
@@ -33,7 +27,7 @@ import org.mariadb.jdbc.util.constants.ServerStatus;
 
 /** Result-set common */
 public abstract class Result implements ResultSet, Completion {
-
+  private static final int NULL_LENGTH = -1;
   private final int maxIndex;
   private final boolean closeOnCompletion;
   private boolean forceAlias;
@@ -52,10 +46,10 @@ public abstract class Result implements ResultSet, Completion {
   protected final Context context;
 
   /** columns metadata */
-  protected final Column[] metadataList;
+  protected final ColumnDecoder[] metadataList;
 
   /** binary/text row decoder */
-  protected final RowDecoder row;
+  protected final RowDecoder rowDecoder;
 
   /** data size */
   protected int dataSize = 0;
@@ -63,6 +57,12 @@ public abstract class Result implements ResultSet, Completion {
   /** rows */
   protected byte[][] data;
 
+  protected final StandardReadableByteBuf rowBuf = new StandardReadableByteBuf(null, 0);
+
+  private int fieldLength;
+
+  protected int fieldIndex;
+  private Map<String, Integer> mapper = null;
   /** is fully loaded */
   protected boolean loaded;
 
@@ -98,7 +98,7 @@ public abstract class Result implements ResultSet, Completion {
       org.mariadb.jdbc.Statement stmt,
       boolean binaryProtocol,
       long maxRows,
-      Column[] metadataList,
+      ColumnDecoder[] metadataList,
       org.mariadb.jdbc.client.socket.Reader reader,
       Context context,
       int resultSetType,
@@ -114,10 +114,7 @@ public abstract class Result implements ResultSet, Completion {
     this.context = context;
     this.resultSetType = resultSetType;
     this.traceEnable = traceEnable;
-    row =
-        binaryProtocol
-            ? new BinaryRowDecoder(this.maxIndex, metadataList, context.getConf())
-            : new TextRowDecoder(this.maxIndex, metadataList, context.getConf());
+    rowDecoder = binaryProtocol ? new BinaryRowDecoder() : new TextRowDecoder();
   }
 
   /**
@@ -127,7 +124,7 @@ public abstract class Result implements ResultSet, Completion {
    * @param data raw data
    * @param context connection context
    */
-  public Result(ColumnDefinitionPacket[] metadataList, byte[][] data, Context context) {
+  public Result(ColumnDecoder[] metadataList, byte[][] data, Context context) {
     this.metadataList = metadataList;
     this.maxIndex = this.metadataList.length;
     this.reader = null;
@@ -140,7 +137,7 @@ public abstract class Result implements ResultSet, Completion {
     this.resultSetType = TYPE_FORWARD_ONLY;
     this.closeOnCompletion = false;
     this.traceEnable = false;
-    row = new TextRowDecoder(maxIndex, metadataList, context.getConf());
+    rowDecoder = new TextRowDecoder();
   }
 
   /**
@@ -362,7 +359,15 @@ public abstract class Result implements ResultSet, Completion {
    */
   protected void updateRowData(byte[] rawData) {
     data[rowPointer] = rawData;
-    row.setRow(rawData);
+    rowBuf.buf(rawData, rawData == null ? 0 : rawData.length, 0);
+    fieldIndex = -1;
+  }
+
+  private void checkIndex(int index) throws SQLException {
+    if (index < 1 || index > maxIndex) {
+      throw new SQLException(
+          String.format("Wrong index position. Is %s but must be in 1-%s range", index, maxIndex));
+    }
   }
 
   /**
@@ -372,37 +377,67 @@ public abstract class Result implements ResultSet, Completion {
    */
   @Override
   public boolean wasNull() {
-    return row.wasNull();
+    return rowDecoder.wasNull();
   }
 
   @Override
   public String getString(int columnIndex) throws SQLException {
-    return row.getStringValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decodeString();
   }
 
   @Override
   public boolean getBoolean(int columnIndex) throws SQLException {
-    return row.getBooleanValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return false;
+    }
+    return rowDecoder.decodeBoolean();
   }
 
   @Override
   public byte getByte(int columnIndex) throws SQLException {
-    return row.getByteValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return 0;
+    }
+    return rowDecoder.decodeByte();
   }
 
   @Override
   public short getShort(int columnIndex) throws SQLException {
-    return row.getShortValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return 0;
+    }
+    return rowDecoder.decodeShort();
   }
 
   @Override
   public int getInt(int columnIndex) throws SQLException {
-    return row.getIntValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return 0;
+    }
+    return rowDecoder.decodeInt();
   }
 
   @Override
   public long getLong(int columnIndex) throws SQLException {
-    return row.getLongValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return 0L;
+    }
+    return rowDecoder.decodeLong();
   }
 
   /**
@@ -414,7 +449,12 @@ public abstract class Result implements ResultSet, Completion {
    * @throws SQLException if cannot be decoded as a BigInteger
    */
   public BigInteger getBigInteger(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, BigIntegerCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(BigIntegerCodec.INSTANCE, null);
   }
 
   /**
@@ -426,145 +466,193 @@ public abstract class Result implements ResultSet, Completion {
    * @throws SQLException if cannot be decoded as a BigInteger
    */
   public BigInteger getBigInteger(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, BigIntegerCodec.INSTANCE, null);
+    return getBigInteger(findColumn(columnLabel));
   }
 
   @Override
   public float getFloat(int columnIndex) throws SQLException {
-    return row.getFloatValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return 0F;
+    }
+    return rowDecoder.decodeFloat();
   }
 
   @Override
   public double getDouble(int columnIndex) throws SQLException {
-    return row.getDoubleValue(columnIndex);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return 0D;
+    }
+    return rowDecoder.decodeDouble();
   }
 
   @Override
   @Deprecated
   public BigDecimal getBigDecimal(int columnIndex, int scale) throws SQLException {
-    BigDecimal d = row.getValue(columnIndex, BigDecimalCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    BigDecimal d = rowDecoder.decode(BigDecimalCodec.INSTANCE, null);
     if (d == null) return null;
     return d.setScale(scale, RoundingMode.HALF_DOWN);
   }
 
   @Override
   public byte[] getBytes(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, ByteArrayCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(ByteArrayCodec.INSTANCE, null);
   }
 
   @Override
   public Date getDate(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, DateCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(DateCodec.INSTANCE, null);
   }
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, TimeCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(TimeCodec.INSTANCE, null);
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, TimestampCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(TimestampCodec.INSTANCE, null);
   }
 
   @Override
   public InputStream getAsciiStream(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, StreamCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(StreamCodec.INSTANCE, null);
   }
 
   @Override
   @Deprecated
   public InputStream getUnicodeStream(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, StreamCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(StreamCodec.INSTANCE, null);
   }
 
   @Override
   public InputStream getBinaryStream(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, StreamCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(StreamCodec.INSTANCE, null);
   }
 
   @Override
   public String getString(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, StringCodec.INSTANCE, null);
+    return getString(findColumn(columnLabel));
   }
 
   @Override
   public boolean getBoolean(String columnLabel) throws SQLException {
-    return row.getBooleanValue(row.getIndex(columnLabel));
+    return getBoolean(findColumn(columnLabel));
   }
 
   @Override
   public byte getByte(String columnLabel) throws SQLException {
-    return row.getByteValue(row.getIndex(columnLabel));
+    return getByte(findColumn(columnLabel));
   }
 
   @Override
   public short getShort(String columnLabel) throws SQLException {
-    return row.getShortValue(row.getIndex(columnLabel));
+    return getShort(findColumn(columnLabel));
   }
 
   @Override
   public int getInt(String columnLabel) throws SQLException {
-    return row.getIntValue(row.getIndex(columnLabel));
+    return getInt(findColumn(columnLabel));
   }
 
   @Override
   public long getLong(String columnLabel) throws SQLException {
-    return row.getLongValue(row.getIndex(columnLabel));
+    return getLong(findColumn(columnLabel));
   }
 
   @Override
   public float getFloat(String columnLabel) throws SQLException {
-    return row.getFloatValue(row.getIndex(columnLabel));
+    return getFloat(findColumn(columnLabel));
   }
 
   @Override
   public double getDouble(String columnLabel) throws SQLException {
-    return row.getDoubleValue(row.getIndex(columnLabel));
+    return getDouble(findColumn(columnLabel));
   }
 
   @Override
   @Deprecated
   public BigDecimal getBigDecimal(String columnLabel, int scale) throws SQLException {
-    BigDecimal d = row.getValue(columnLabel, BigDecimalCodec.INSTANCE, null);
-    if (d == null) return null;
-    return d.setScale(scale, RoundingMode.HALF_DOWN);
+    return getBigDecimal(findColumn(columnLabel), scale);
   }
 
   @Override
   public byte[] getBytes(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, ByteArrayCodec.INSTANCE, null);
+    return getBytes(findColumn(columnLabel));
   }
 
   @Override
   public Date getDate(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, DateCodec.INSTANCE, null);
+    return getDate(findColumn(columnLabel));
   }
 
   @Override
   public Time getTime(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, TimeCodec.INSTANCE, null);
+    return getTime(findColumn(columnLabel));
   }
 
   @Override
   public Timestamp getTimestamp(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, TimestampCodec.INSTANCE, null);
+    return getTimestamp(findColumn(columnLabel));
   }
 
   @Override
   public InputStream getAsciiStream(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, StreamCodec.INSTANCE, null);
+    return getAsciiStream(findColumn(columnLabel));
   }
 
   @Override
   @Deprecated
   public InputStream getUnicodeStream(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, StreamCodec.INSTANCE, null);
+    return getUnicodeStream(findColumn(columnLabel));
   }
 
   @Override
   public InputStream getBinaryStream(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, StreamCodec.INSTANCE, null);
+    return getBinaryStream(findColumn(columnLabel));
   }
 
   @Override
@@ -594,43 +682,47 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public Object getObject(int columnIndex) throws SQLException {
-    if (columnIndex < 1 || columnIndex > maxIndex) {
-      throw new SQLException(
-          String.format(
-              "Wrong index position. Is %s but must be in 1-%s range", columnIndex, maxIndex));
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
     }
-    Codec<?> defaultCodec = metadataList[columnIndex - 1].getDefaultCodec(context.getConf());
-    return row.getValue(columnIndex, defaultCodec, null);
+    return rowDecoder.defaultDecode();
   }
 
   @Override
   public Object getObject(String columnLabel) throws SQLException {
-    return getObject(row.getIndex(columnLabel));
-  }
-
-  @Override
-  public int findColumn(String columnLabel) throws SQLException {
-    return row.getIndex(columnLabel);
+    return getObject(findColumn(columnLabel));
   }
 
   @Override
   public Reader getCharacterStream(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, ReaderCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(ReaderCodec.INSTANCE, null);
   }
 
   @Override
   public Reader getCharacterStream(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, ReaderCodec.INSTANCE, null);
+    return getCharacterStream(findColumn(columnLabel));
   }
 
   @Override
   public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, BigDecimalCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(BigDecimalCodec.INSTANCE, null);
   }
 
   @Override
   public BigDecimal getBigDecimal(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, BigDecimalCodec.INSTANCE, null);
+    return getBigDecimal(findColumn(columnLabel));
   }
 
   /**
@@ -997,12 +1089,22 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public Blob getBlob(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, BlobCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(BlobCodec.INSTANCE, null);
   }
 
   @Override
   public Clob getClob(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, ClobCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(ClobCodec.INSTANCE, null);
   }
 
   @Override
@@ -1026,12 +1128,12 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public Blob getBlob(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, BlobCodec.INSTANCE, null);
+    return getBlob(findColumn(columnLabel));
   }
 
   @Override
   public Clob getClob(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, ClobCodec.INSTANCE, null);
+    return getClob(findColumn(columnLabel));
   }
 
   @Override
@@ -1041,37 +1143,58 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public Date getDate(int columnIndex, Calendar cal) throws SQLException {
-    return row.getValue(columnIndex, DateCodec.INSTANCE, cal);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(DateCodec.INSTANCE, cal);
   }
 
   @Override
   public Date getDate(String columnLabel, Calendar cal) throws SQLException {
-    return row.getValue(columnLabel, DateCodec.INSTANCE, cal);
+    return getDate(findColumn(columnLabel), cal);
   }
 
   @Override
   public Time getTime(int columnIndex, Calendar cal) throws SQLException {
-    return row.getValue(columnIndex, TimeCodec.INSTANCE, cal);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(TimeCodec.INSTANCE, cal);
   }
 
   @Override
   public Time getTime(String columnLabel, Calendar cal) throws SQLException {
-    return row.getValue(columnLabel, TimeCodec.INSTANCE, cal);
+    return getTime(findColumn(columnLabel), cal);
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex, Calendar cal) throws SQLException {
-    return row.getValue(columnIndex, TimestampCodec.INSTANCE, cal);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(TimestampCodec.INSTANCE, cal);
   }
 
   @Override
   public Timestamp getTimestamp(String columnLabel, Calendar cal) throws SQLException {
-    return row.getValue(columnLabel, TimestampCodec.INSTANCE, cal);
+    return getTimestamp(findColumn(columnLabel));
   }
 
   @Override
   public URL getURL(int columnIndex) throws SQLException {
-    String s = row.getValue(columnIndex, StringCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+
+    String s = rowDecoder.decode(StringCodec.INSTANCE, null);
     if (s == null) return null;
     try {
       return new URL(s);
@@ -1082,7 +1205,7 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public URL getURL(String columnLabel) throws SQLException {
-    return getURL(row.getIndex(columnLabel));
+    return getURL(findColumn(columnLabel));
   }
 
   @Override
@@ -1177,12 +1300,17 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public NClob getNClob(int columnIndex) throws SQLException {
-    return (NClob) row.getValue(columnIndex, ClobCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return (NClob) rowDecoder.decode(ClobCodec.INSTANCE, null);
   }
 
   @Override
   public NClob getNClob(String columnLabel) throws SQLException {
-    return (NClob) row.getValue(columnLabel, ClobCodec.INSTANCE, null);
+    return getNClob(findColumn(columnLabel));
   }
 
   @Override
@@ -1207,22 +1335,27 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public String getNString(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, StringCodec.INSTANCE, null);
+    return getString(columnIndex);
   }
 
   @Override
   public String getNString(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, StringCodec.INSTANCE, null);
+    return getString(columnLabel);
   }
 
   @Override
   public Reader getNCharacterStream(int columnIndex) throws SQLException {
-    return row.getValue(columnIndex, ReaderCodec.INSTANCE, null);
+    checkIndex(columnIndex);
+    rowDecoder.setPosition(columnIndex - 1);
+    if (fieldLength == NULL_LENGTH) {
+      return null;
+    }
+    return rowDecoder.decode(ReaderCodec.INSTANCE, null);
   }
 
   @Override
   public Reader getNCharacterStream(String columnLabel) throws SQLException {
-    return row.getValue(columnLabel, ReaderCodec.INSTANCE, null);
+    return getNCharacterStream(findColumn(columnLabel));
   }
 
   @Override
@@ -1373,12 +1506,35 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
-    return row.getValue(columnIndex, type, null);
+    rowDecoder.setPosition(columnIndex - 1);
+    Calendar calendar = null;
+    if (wasNull()) {
+      if (type.isPrimitive()) {
+        throw new SQLException(
+            String.format("Cannot return null for primitive %s", type.getName()));
+      }
+      return null;
+    }
+    Configuration conf = context.getConf();
+    ColumnDecoder column = metadataList[columnIndex - 1];
+    // type generic, return "natural" java type
+    if (Object.class.equals(type) || type == null) {
+      return (T) rowDecoder.defaultDecode();
+    }
+
+    for (Codec<?> codec : conf.codecs()) {
+      if (codec.canDecode(column, type)) {
+        return rowDecoder.decode((Codec<T>) codec, calendar);
+      }
+    }
+    rowBuf.skip(fieldLength);
+    throw new SQLException(
+        String.format("Type %s not supported type for %s type", type, column.getType().name()));
   }
 
   @Override
   public <T> T getObject(String columnLabel, Class<T> type) throws SQLException {
-    return getObject(row.getIndex(columnLabel), type);
+    return getObject(findColumn(columnLabel), type);
   }
 
   @Override
@@ -1415,5 +1571,316 @@ public abstract class Result implements ResultSet, Completion {
   public void updateObject(String columnLabel, Object x, SQLType targetSqlType)
       throws SQLException {
     throw exceptionFactory.notSupported("Not supported when using CONCUR_READ_ONLY concurrency");
+  }
+
+  protected void setRowBuf(byte[] row) {
+    rowBuf.buf(row, row.length, 0);
+    fieldIndex = -1;
+  }
+
+  protected void setNullRowBuf() {
+    rowBuf.buf(null, 0, 0);
+  }
+
+  public int findColumn(String label) throws SQLException {
+    if (label == null) throw new SQLException("null is not a valid label value");
+    if (mapper == null) {
+      mapper = new HashMap<>();
+      for (int i = 0; i < maxIndex; i++) {
+        Column ci = metadataList[i];
+        String columnAlias = ci.getColumnAlias();
+        if (columnAlias != null) {
+          columnAlias = columnAlias.toLowerCase(Locale.ROOT);
+          mapper.putIfAbsent(columnAlias, i + 1);
+          String tableAlias = ci.getTableAlias();
+          String tableLabel = tableAlias != null ? tableAlias : ci.getTable();
+          mapper.putIfAbsent(tableLabel.toLowerCase(Locale.ROOT) + "." + columnAlias, i + 1);
+        }
+      }
+    }
+    Integer ind = mapper.get(label.toLowerCase(Locale.ROOT));
+    if (ind == null) {
+      String keys = Arrays.toString(mapper.keySet().toArray(new String[0]));
+      throw new SQLException(String.format("Unknown label '%s'. Possible value %s", label, keys));
+    }
+    return ind;
+  }
+
+  private interface RowDecoder {
+
+    boolean wasNull();
+
+    void setPosition(int position);
+
+    <T> T decode(Codec<T> codec, Calendar calendar) throws SQLException;
+
+    Object defaultDecode() throws SQLException;
+
+    byte decodeByte() throws SQLException;
+
+    boolean decodeBoolean() throws SQLException;
+
+    short decodeShort() throws SQLException;
+
+    int decodeInt() throws SQLException;
+
+    String decodeString() throws SQLException;
+
+    long decodeLong() throws SQLException;
+
+    float decodeFloat() throws SQLException;
+
+    double decodeDouble() throws SQLException;
+  }
+
+  private class TextRowDecoder implements Result.RowDecoder {
+
+    @Override
+    public <T> T decode(Codec<T> codec, Calendar cal) throws SQLException {
+      return codec.decodeText(rowBuf, fieldLength, metadataList[fieldIndex], cal);
+    }
+
+    @Override
+    public Object defaultDecode() throws SQLException {
+      return metadataList[fieldIndex].getDefaultText(rowBuf, fieldLength);
+    }
+
+    @Override
+    public String decodeString() throws SQLException {
+      return metadataList[fieldIndex].decodeStringText(rowBuf, fieldLength, null);
+    }
+
+    public byte decodeByte() throws SQLException {
+      return metadataList[fieldIndex].decodeByteText(rowBuf, fieldLength);
+    }
+
+    public boolean decodeBoolean() throws SQLException {
+      return metadataList[fieldIndex].decodeBooleanText(rowBuf, fieldLength);
+    }
+
+    public short decodeShort() throws SQLException {
+      return metadataList[fieldIndex].decodeShortText(rowBuf, fieldLength);
+    }
+
+    public int decodeInt() throws SQLException {
+      return metadataList[fieldIndex].decodeIntText(rowBuf, fieldLength);
+    }
+
+    public long decodeLong() throws SQLException {
+      return metadataList[fieldIndex].decodeLongText(rowBuf, fieldLength);
+    }
+
+    public float decodeFloat() throws SQLException {
+      return metadataList[fieldIndex].decodeFloatText(rowBuf, fieldLength);
+    }
+
+    public double decodeDouble() throws SQLException {
+      return metadataList[fieldIndex].decodeDoubleBinary(rowBuf, fieldLength);
+    }
+
+    public boolean wasNull() {
+      return fieldLength == NULL_LENGTH;
+    }
+
+    /**
+     * Set length and pos indicator to asked index.
+     *
+     * @param newIndex index (1 is first).
+     */
+    @Override
+    public void setPosition(int newIndex) {
+      if (fieldIndex >= newIndex) {
+        fieldIndex = 0;
+        rowBuf.pos(0);
+      } else {
+        fieldIndex++;
+      }
+
+      while (fieldIndex < newIndex) {
+        rowBuf.skipLengthEncoded();
+        fieldIndex++;
+      }
+
+      byte len = rowBuf.readByte();
+      switch (len) {
+        case (byte) 251:
+          fieldLength = NULL_LENGTH;
+          return;
+        case (byte) 252:
+          fieldLength = rowBuf.readUnsignedShort();
+          return;
+        case (byte) 253:
+          fieldLength = rowBuf.readUnsignedMedium();
+          return;
+        case (byte) 254:
+          fieldLength = (int) rowBuf.readUnsignedInt();
+          rowBuf.skip(4);
+          return;
+        default:
+          fieldLength = len & 0xff;
+          return;
+      }
+    }
+  }
+
+  public class BinaryRowDecoder implements Result.RowDecoder {
+
+    private byte[] nullBitmap;
+
+    public <T> T decode(Codec<T> codec, Calendar cal) throws SQLException {
+      return codec.decodeBinary(rowBuf, fieldLength, metadataList[fieldIndex], cal);
+    }
+
+    @Override
+    public Object defaultDecode() throws SQLException {
+      return metadataList[fieldIndex].getDefaultBinary(rowBuf, fieldLength);
+    }
+    public String decodeString() throws SQLException {
+      return metadataList[fieldIndex].decodeStringBinary(rowBuf, fieldLength, null);
+    }
+
+    public byte decodeByte() throws SQLException {
+      return metadataList[fieldIndex].decodeByteBinary(rowBuf, fieldLength);
+    }
+
+    public boolean decodeBoolean() throws SQLException {
+      return metadataList[fieldIndex].decodeBooleanBinary(rowBuf, fieldLength);
+    }
+
+    public short decodeShort() throws SQLException {
+      return metadataList[fieldIndex].decodeShortBinary(rowBuf, fieldLength);
+    }
+
+    public int decodeInt() throws SQLException {
+      return metadataList[fieldIndex].decodeIntBinary(rowBuf, fieldLength);
+    }
+
+    public long decodeLong() throws SQLException {
+      return metadataList[fieldIndex].decodeLongBinary(rowBuf, fieldLength);
+    }
+    public float decodeFloat() throws SQLException {
+      return metadataList[fieldIndex].decodeFloatBinary(rowBuf, fieldLength);
+    }
+
+    public double decodeDouble() throws SQLException {
+      return metadataList[fieldIndex].decodeDoubleBinary(rowBuf, fieldLength);
+    }
+
+    public void setRow(byte[] buf) {
+      if (buf != null) {
+        nullBitmap = new byte[(maxIndex + 9) / 8];
+        for (int i = 0; i < nullBitmap.length; i++) {
+          nullBitmap[i] = buf[i + 1];
+        }
+        rowBuf.buf(buf, buf.length, 1 + nullBitmap.length);
+      } else {
+        rowBuf.buf(null, 0, 0);
+      }
+      fieldIndex = -1;
+    }
+
+    public boolean wasNull() {
+      return (nullBitmap[(fieldIndex + 2) / 8] & (1 << ((fieldIndex + 2) % 8))) > 0;
+    }
+
+    /**
+     * Set length and pos indicator to asked index.
+     *
+     * @param newIndex index (0 is first).
+     */
+    @Override
+    public void setPosition(int newIndex) {
+
+      if (fieldIndex >= newIndex) {
+        fieldIndex = 0;
+        // skip header + null-bitmap
+        rowBuf.pos(1 + ((maxIndex + 9) / 8));
+      } else {
+        fieldIndex++;
+      }
+
+      while (fieldIndex < newIndex) {
+        if ((nullBitmap[(fieldIndex + 2) / 8] & (1 << ((fieldIndex + 2) % 8))) == 0) {
+          // skip bytes
+          switch (metadataList[fieldIndex].getType()) {
+            case BIGINT:
+            case DOUBLE:
+              rowBuf.skip(8);
+              break;
+
+            case INTEGER:
+            case MEDIUMINT:
+            case FLOAT:
+              rowBuf.skip(4);
+              break;
+
+            case SMALLINT:
+            case YEAR:
+              rowBuf.skip(2);
+              break;
+
+            case TINYINT:
+              rowBuf.skip(1);
+              break;
+
+            default:
+              rowBuf.skipLengthEncoded();
+              break;
+          }
+        }
+        fieldIndex++;
+      }
+
+      if (wasNull()) {
+        fieldLength = NULL_LENGTH;
+        return;
+      }
+
+      // read asked field position and length
+      switch (metadataList[fieldIndex].getType()) {
+        case BIGINT:
+        case DOUBLE:
+          fieldLength = 8;
+          return;
+
+        case INTEGER:
+        case MEDIUMINT:
+        case FLOAT:
+          fieldLength = 4;
+          return;
+
+        case SMALLINT:
+        case YEAR:
+          fieldLength = 2;
+          return;
+
+        case TINYINT:
+          fieldLength = 1;
+          return;
+
+        default:
+          // field with variable length
+          byte len = rowBuf.readByte();
+          switch (len) {
+            case (byte) 252:
+              // length is encoded on 3 bytes (0xfc header + 2 bytes indicating length)
+              fieldLength = rowBuf.readUnsignedShort();
+              return;
+
+            case (byte) 253:
+              // length is encoded on 4 bytes (0xfd header + 3 bytes indicating length)
+              fieldLength = rowBuf.readUnsignedMedium();
+              return;
+
+            case (byte) 254:
+              // length is encoded on 9 bytes (0xfe header + 8 bytes indicating length)
+              fieldLength = (int) rowBuf.readLong();
+              return;
+            default:
+              fieldLength = len & 0xff;
+              return;
+          }
+      }
+    }
   }
 }

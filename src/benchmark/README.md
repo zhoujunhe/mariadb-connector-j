@@ -14,7 +14,7 @@ mvn clean package -P bench -DskipTests
 nohup java -Duser.country=US -Duser.language=en -jar target/benchmarks.jar > log.txt
 
 # run a specific benchmark
-java -Duser.country=US -Duser.language=en -jar target/benchmarks.jar "Select_100_cols"
+java -Duser.country=US -Duser.language=en -jar target/benchmarks.jar "Select_1000_Rows"
 ```
 
 Configuration by system properties :

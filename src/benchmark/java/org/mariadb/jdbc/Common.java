@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @Warmup(iterations = 10, timeUnit = TimeUnit.SECONDS, time = 1)
 @Measurement(iterations = 10, timeUnit = TimeUnit.SECONDS, time = 1)
-@Fork(value = 5)
+@Fork(value = 1)
 @Threads(value = 1) // detecting CPU count
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.SECONDS)
@@ -40,7 +40,9 @@ public class Common {
     protected Connection connectionText;
     protected Connection connectionBinary;
 
-    @Param({"mysql", "mariadb"})
+    @Param({
+//            "mysql",
+            "mariadb"})
     String driver;
     @Setup(Level.Trial)
     public void createConnections() throws Exception {
@@ -68,8 +70,8 @@ public class Common {
                         driver, host, port, database, username, password, true, true, other);
 
         connectionText =
-            ((java.sql.Driver) Class.forName(className).getDeclaredConstructor().newInstance())
-                .connect(jdbcUrlText, new Properties());
+                ((java.sql.Driver) Class.forName(className).getDeclaredConstructor().newInstance())
+                        .connect(jdbcUrlText, new Properties());
         connectionBinary =
                 ((java.sql.Driver) Class.forName(className).getDeclaredConstructor().newInstance())
                         .connect(jdbcUrlBinary, new Properties());

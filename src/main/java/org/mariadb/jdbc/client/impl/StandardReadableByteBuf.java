@@ -58,21 +58,22 @@ public final class StandardReadableByteBuf implements ReadableByteBuf {
   }
 
   public void skipLengthEncoded() {
-    int len = buf[pos++] & 0xff;
-    if (len < 251) {
-      pos += len;
-    } else {
-      switch (len) {
-        case 252:
-          skip(readUnsignedShort());
-          break;
-        case 253:
-          skip(readUnsignedMedium());
-          break;
-        case 254:
-          skip((int) (4 + readUnsignedInt()));
-          break;
-      }
+    byte len = buf[pos++];
+    switch (len) {
+      case (byte) 251:
+        return;
+      case (byte) 252:
+        skip(readUnsignedShort());
+        return;
+      case (byte) 253:
+        skip(readUnsignedMedium());
+        return;
+      case (byte) 254:
+        skip((int) (4 + readUnsignedInt()));
+        return;
+      default:
+        pos += len & 0xff;
+        return;
     }
   }
 

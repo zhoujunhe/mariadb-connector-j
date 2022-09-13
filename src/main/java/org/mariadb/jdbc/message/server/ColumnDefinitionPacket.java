@@ -4,7 +4,6 @@
 
 package org.mariadb.jdbc.message.server;
 
-import java.nio.charset.StandardCharsets;
 import java.sql.Types;
 import java.util.Locale;
 import java.util.Objects;
@@ -12,7 +11,6 @@ import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.Column;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
-import org.mariadb.jdbc.client.impl.StandardReadableByteBuf;
 import org.mariadb.jdbc.message.ServerMessage;
 import org.mariadb.jdbc.plugin.Codec;
 import org.mariadb.jdbc.plugin.codec.*;
@@ -33,6 +31,27 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
   private final String extTypeFormat;
   private boolean useAliasAsName;
 
+  public ColumnDefinitionPacket(
+      ReadableByteBuf buf,
+      int charset,
+      long length,
+      DataType dataType,
+      byte decimals,
+      int flags,
+      int[] stringPos,
+      String extTypeName,
+      String extTypeFormat) {
+    this.buf = buf;
+    this.charset = charset;
+    this.length = length;
+    this.dataType = dataType;
+    this.decimals = decimals;
+    this.flags = flags;
+    this.stringPos = stringPos;
+    this.extTypeName = extTypeName;
+    this.extTypeFormat = extTypeFormat;
+  }
+
   /**
    * constructor for generated metadata
    *
@@ -42,7 +61,7 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
    * @param stringPos string information position
    * @param flags columns flags
    */
-  private ColumnDefinitionPacket(
+  public ColumnDefinitionPacket(
       ReadableByteBuf buf, long length, DataType dataType, int[] stringPos, int flags) {
     this.buf = buf;
     this.charset = 33;
@@ -109,59 +128,6 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
     this.dataType = DataType.of(buf.readUnsignedByte());
     this.flags = buf.readUnsignedShort();
     this.decimals = buf.readByte();
-  }
-
-  /**
-   * Generate column definition from name
-   *
-   * @param name column name
-   * @param type server type
-   * @param flags columns flags
-   * @return column definition
-   */
-  public static ColumnDefinitionPacket create(String name, DataType type, int flags) {
-    byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
-    byte[] arr = new byte[9 + 2 * nameBytes.length];
-    arr[0] = 3;
-    arr[1] = 'D';
-    arr[2] = 'E';
-    arr[3] = 'F';
-
-    int[] stringPos = new int[5];
-    stringPos[0] = 4; // schema pos
-    stringPos[1] = 5; // table alias pos
-    stringPos[2] = 6; // table pos
-
-    // lenenc_str     name
-    // lenenc_str     org_name
-    int pos = 7;
-    for (int i = 0; i < 2; i++) {
-      stringPos[i + 3] = pos;
-      arr[pos++] = (byte) nameBytes.length;
-      System.arraycopy(nameBytes, 0, arr, pos, nameBytes.length);
-      pos += nameBytes.length;
-    }
-    int len;
-
-    /* Sensible predefined length - since we're dealing with I_S here, most char fields are 64 char long */
-    switch (type) {
-      case VARCHAR:
-      case VARSTRING:
-        len = 64 * 3; /* 3 bytes per UTF8 char */
-        break;
-      case SMALLINT:
-        len = 5;
-        break;
-      case NULL:
-        len = 0;
-        break;
-      default:
-        len = 1;
-        break;
-    }
-
-    return new ColumnDefinitionPacket(
-        new StandardReadableByteBuf(arr, arr.length), len, type, stringPos, flags);
   }
 
   public String getSchema() {

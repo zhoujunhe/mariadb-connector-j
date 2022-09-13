@@ -19,10 +19,10 @@ public class Select_1000_Rows extends Common {
     return run(state.connectionText);
   }
 
-  @Benchmark
-  public int binary(MyState state) throws Throwable {
-    return run(state.connectionBinary);
-  }
+//  @Benchmark
+//  public int binary(MyState state) throws Throwable {
+//    return run(state.connectionBinary);
+//  }
 
   private int run(Connection con) throws Throwable {
     try (PreparedStatement st = con.prepareStatement(sql)) {
