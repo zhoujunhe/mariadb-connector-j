@@ -20,6 +20,7 @@ import java.util.function.Consumer;
 import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.*;
 import org.mariadb.jdbc.client.impl.StandardReadableByteBuf;
+import org.mariadb.jdbc.client.util.MutableInt;
 import org.mariadb.jdbc.export.ExceptionFactory;
 import org.mariadb.jdbc.message.server.ErrorPacket;
 import org.mariadb.jdbc.plugin.Codec;
@@ -28,7 +29,9 @@ import org.mariadb.jdbc.util.constants.ServerStatus;
 
 /** Result-set common */
 public abstract class Result implements ResultSet, Completion {
-  private static final int NULL_LENGTH = -1;
+  private static BinaryRowDecoder BINARY_ROW_DECODER = new BinaryRowDecoder();
+  private static TextRowDecoder TEXT_ROW_DECODER = new TextRowDecoder();
+  static final int NULL_LENGTH = -1;
   private final int maxIndex;
   private final boolean closeOnCompletion;
   private boolean forceAlias;
@@ -64,7 +67,7 @@ public abstract class Result implements ResultSet, Completion {
   protected final StandardReadableByteBuf rowBuf = new StandardReadableByteBuf(null, 0);
   private int fieldLength;
 
-  protected int fieldIndex;
+  protected MutableInt fieldIndex = new MutableInt();
   private Map<String, Integer> mapper = null;
   /** is fully loaded */
   protected boolean loaded;
@@ -118,10 +121,10 @@ public abstract class Result implements ResultSet, Completion {
     this.resultSetType = resultSetType;
     this.traceEnable = traceEnable;
     if (binaryProtocol) {
-      rowDecoder = new BinaryRowDecoder();
+      rowDecoder = BINARY_ROW_DECODER;
       setrow = this::setBinaryRowBuf;
     } else {
-      rowDecoder = new TextRowDecoder();
+      rowDecoder = TEXT_ROW_DECODER;
       setrow = this::setTextRowBuf;
     }
   }
@@ -146,7 +149,7 @@ public abstract class Result implements ResultSet, Completion {
     this.resultSetType = TYPE_FORWARD_ONLY;
     this.closeOnCompletion = false;
     this.traceEnable = false;
-    rowDecoder = new TextRowDecoder();
+    rowDecoder = TEXT_ROW_DECODER;
     setrow = this::setTextRowBuf;
   }
 
@@ -373,7 +376,7 @@ public abstract class Result implements ResultSet, Completion {
       setNullRowBuf();
     } else {
       setrow.accept(rawData);
-      fieldIndex = -1;
+      fieldIndex.set(-1);
     }
   }
 
@@ -394,67 +397,79 @@ public abstract class Result implements ResultSet, Completion {
    */
   @Override
   public boolean wasNull() {
-    return rowDecoder.wasNull();
+    return rowDecoder.wasNull(nullBitmap, fieldIndex, fieldLength);
   }
 
   @Override
   public String getString(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decodeString();
+    return rowDecoder.decodeString(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   public boolean getBoolean(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return false;
     }
-    return rowDecoder.decodeBoolean();
+    return rowDecoder.decodeBoolean(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   public byte getByte(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return 0;
     }
-    return rowDecoder.decodeByte();
+    return rowDecoder.decodeByte(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   public short getShort(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return 0;
     }
-    return rowDecoder.decodeShort();
+    return rowDecoder.decodeShort(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   public int getInt(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return 0;
     }
-    return rowDecoder.decodeInt();
+    return rowDecoder.decodeInt(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   public long getLong(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return 0L;
     }
-    return rowDecoder.decodeLong();
+    return rowDecoder.decodeLong(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   /**
@@ -467,11 +482,14 @@ public abstract class Result implements ResultSet, Completion {
    */
   public BigInteger getBigInteger(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(BigIntegerCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        BigIntegerCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   /**
@@ -489,32 +507,40 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public float getFloat(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return 0F;
     }
-    return rowDecoder.decodeFloat();
+    return rowDecoder.decodeFloat(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   public double getDouble(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return 0D;
     }
-    return rowDecoder.decodeDouble();
+    return rowDecoder.decodeDouble(metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
   @Deprecated
   public BigDecimal getBigDecimal(int columnIndex, int scale) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    BigDecimal d = rowDecoder.decode(BigDecimalCodec.INSTANCE, null);
+    BigDecimal d =
+        rowDecoder.decode(
+            BigDecimalCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
     if (d == null) return null;
     return d.setScale(scale, RoundingMode.HALF_DOWN);
   }
@@ -522,72 +548,93 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public byte[] getBytes(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(ByteArrayCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        ByteArrayCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   public Date getDate(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(DateCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        DateCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   public Time getTime(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(TimeCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        TimeCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   public Timestamp getTimestamp(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(TimestampCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        TimestampCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   public InputStream getAsciiStream(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(StreamCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        StreamCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   @Deprecated
   public InputStream getUnicodeStream(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(StreamCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        StreamCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   public InputStream getBinaryStream(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(StreamCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        StreamCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -700,11 +747,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Object getObject(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.defaultDecode(context.getConf());
+    return rowDecoder.defaultDecode(
+        context.getConf(), metadataList, fieldIndex, rowBuf, fieldLength);
   }
 
   @Override
@@ -715,11 +765,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Reader getCharacterStream(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(ReaderCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        ReaderCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -730,11 +783,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public BigDecimal getBigDecimal(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(BigDecimalCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        BigDecimalCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1107,21 +1163,27 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Blob getBlob(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(BlobCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        BlobCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
   public Clob getClob(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(ClobCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        ClobCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1161,11 +1223,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Date getDate(int columnIndex, Calendar cal) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(DateCodec.INSTANCE, cal);
+    return rowDecoder.decode(
+        DateCodec.INSTANCE, cal, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1176,11 +1241,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Time getTime(int columnIndex, Calendar cal) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(TimeCodec.INSTANCE, cal);
+    return rowDecoder.decode(
+        TimeCodec.INSTANCE, cal, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1191,11 +1259,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Timestamp getTimestamp(int columnIndex, Calendar cal) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(TimestampCodec.INSTANCE, cal);
+    return rowDecoder.decode(
+        TimestampCodec.INSTANCE, cal, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1206,12 +1277,16 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public URL getURL(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
 
-    String s = rowDecoder.decode(StringCodec.INSTANCE, null);
+    String s =
+        rowDecoder.decode(
+            StringCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
     if (s == null) return null;
     try {
       return new URL(s);
@@ -1318,11 +1393,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public NClob getNClob(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return (NClob) rowDecoder.decode(ClobCodec.INSTANCE, null);
+    return (NClob)
+        rowDecoder.decode(ClobCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1363,11 +1441,14 @@ public abstract class Result implements ResultSet, Completion {
   @Override
   public Reader getNCharacterStream(int columnIndex) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.decode(ReaderCodec.INSTANCE, null);
+    return rowDecoder.decode(
+        ReaderCodec.INSTANCE, null, rowBuf, fieldLength, metadataList, fieldIndex);
   }
 
   @Override
@@ -1525,7 +1606,9 @@ public abstract class Result implements ResultSet, Completion {
   @SuppressWarnings("unchecked")
   public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
     checkIndex(columnIndex);
-    rowDecoder.setPosition(columnIndex - 1);
+    fieldLength =
+        rowDecoder.setPosition(
+            columnIndex - 1, fieldIndex, maxIndex, rowBuf, nullBitmap, metadataList);
     Calendar calendar = null;
     if (wasNull()) {
       if (type.isPrimitive()) {
@@ -1538,12 +1621,13 @@ public abstract class Result implements ResultSet, Completion {
     ColumnDecoder column = metadataList[columnIndex - 1];
     // type generic, return "natural" java type
     if (Object.class.equals(type) || type == null) {
-      return (T) rowDecoder.defaultDecode(conf);
+      return (T) rowDecoder.defaultDecode(conf, metadataList, fieldIndex, rowBuf, fieldLength);
     }
 
     for (Codec<?> codec : conf.codecs()) {
       if (codec.canDecode(column, type)) {
-        return rowDecoder.decode((Codec<T>) codec, calendar);
+        return rowDecoder.decode(
+            (Codec<T>) codec, calendar, rowBuf, fieldLength, metadataList, fieldIndex);
       }
     }
     rowBuf.skip(fieldLength);
@@ -1598,7 +1682,7 @@ public abstract class Result implements ResultSet, Completion {
 
   private void setTextRowBuf(byte[] row) {
     rowBuf.buf(row, row.length, 0);
-    fieldIndex = -1;
+    fieldIndex.set(-1);
   }
 
   private void setBinaryRowBuf(byte[] buf) {
@@ -1607,7 +1691,7 @@ public abstract class Result implements ResultSet, Completion {
       nullBitmap[i] = buf[i + 1];
     }
     rowBuf.buf(buf, buf.length, 1 + nullBitmap.length);
-    fieldIndex = -1;
+    fieldIndex.set(-1);
   }
 
   public int findColumn(String label) throws SQLException {
@@ -1632,270 +1716,5 @@ public abstract class Result implements ResultSet, Completion {
       throw new SQLException(String.format("Unknown label '%s'. Possible value %s", label, keys));
     }
     return ind;
-  }
-
-  private interface RowDecoder {
-
-    boolean wasNull();
-
-    void setPosition(int position);
-
-    <T> T decode(Codec<T> codec, Calendar calendar) throws SQLException;
-
-    Object defaultDecode(Configuration conf) throws SQLException;
-
-    byte decodeByte() throws SQLException;
-
-    boolean decodeBoolean() throws SQLException;
-
-    short decodeShort() throws SQLException;
-
-    int decodeInt() throws SQLException;
-
-    String decodeString() throws SQLException;
-
-    long decodeLong() throws SQLException;
-
-    float decodeFloat() throws SQLException;
-
-    double decodeDouble() throws SQLException;
-  }
-
-  private class TextRowDecoder implements Result.RowDecoder {
-
-    @Override
-    public <T> T decode(Codec<T> codec, Calendar cal) throws SQLException {
-      return codec.decodeText(rowBuf, fieldLength, metadataList[fieldIndex], cal);
-    }
-
-    @Override
-    public Object defaultDecode(Configuration conf) throws SQLException {
-      return metadataList[fieldIndex].getDefaultText(conf, rowBuf, fieldLength);
-    }
-
-    @Override
-    public String decodeString() throws SQLException {
-      return metadataList[fieldIndex].decodeStringText(rowBuf, fieldLength, null);
-    }
-
-    public byte decodeByte() throws SQLException {
-      return metadataList[fieldIndex].decodeByteText(rowBuf, fieldLength);
-    }
-
-    public boolean decodeBoolean() throws SQLException {
-      return metadataList[fieldIndex].decodeBooleanText(rowBuf, fieldLength);
-    }
-
-    public short decodeShort() throws SQLException {
-      return metadataList[fieldIndex].decodeShortText(rowBuf, fieldLength);
-    }
-
-    public int decodeInt() throws SQLException {
-      return metadataList[fieldIndex].decodeIntText(rowBuf, fieldLength);
-    }
-
-    public long decodeLong() throws SQLException {
-      return metadataList[fieldIndex].decodeLongText(rowBuf, fieldLength);
-    }
-
-    public float decodeFloat() throws SQLException {
-      return metadataList[fieldIndex].decodeFloatText(rowBuf, fieldLength);
-    }
-
-    public double decodeDouble() throws SQLException {
-      return metadataList[fieldIndex].decodeDoubleText(rowBuf, fieldLength);
-    }
-
-    public boolean wasNull() {
-      return fieldLength == NULL_LENGTH;
-    }
-
-    /**
-     * Set length and pos indicator to asked index.
-     *
-     * @param newIndex index (1 is first).
-     */
-    @Override
-    public void setPosition(int newIndex) {
-      if (fieldIndex >= newIndex) {
-        fieldIndex = 0;
-        rowBuf.pos(0);
-      } else {
-        fieldIndex++;
-      }
-
-      while (fieldIndex < newIndex) {
-        rowBuf.skipLengthEncoded();
-        fieldIndex++;
-      }
-
-      byte len = rowBuf.readByte();
-      switch (len) {
-        case (byte) 251:
-          fieldLength = NULL_LENGTH;
-          return;
-        case (byte) 252:
-          fieldLength = rowBuf.readUnsignedShort();
-          return;
-        case (byte) 253:
-          fieldLength = rowBuf.readUnsignedMedium();
-          return;
-        case (byte) 254:
-          fieldLength = (int) rowBuf.readUnsignedInt();
-          rowBuf.skip(4);
-          return;
-        default:
-          fieldLength = len & 0xff;
-          return;
-      }
-    }
-  }
-
-  public class BinaryRowDecoder implements Result.RowDecoder {
-
-    public <T> T decode(Codec<T> codec, Calendar cal) throws SQLException {
-      return codec.decodeBinary(rowBuf, fieldLength, metadataList[fieldIndex], cal);
-    }
-
-    @Override
-    public Object defaultDecode(Configuration conf) throws SQLException {
-      return metadataList[fieldIndex].getDefaultBinary(conf, rowBuf, fieldLength);
-    }
-
-    public String decodeString() throws SQLException {
-      return metadataList[fieldIndex].decodeStringBinary(rowBuf, fieldLength, null);
-    }
-
-    public byte decodeByte() throws SQLException {
-      return metadataList[fieldIndex].decodeByteBinary(rowBuf, fieldLength);
-    }
-
-    public boolean decodeBoolean() throws SQLException {
-      return metadataList[fieldIndex].decodeBooleanBinary(rowBuf, fieldLength);
-    }
-
-    public short decodeShort() throws SQLException {
-      return metadataList[fieldIndex].decodeShortBinary(rowBuf, fieldLength);
-    }
-
-    public int decodeInt() throws SQLException {
-      return metadataList[fieldIndex].decodeIntBinary(rowBuf, fieldLength);
-    }
-
-    public long decodeLong() throws SQLException {
-      return metadataList[fieldIndex].decodeLongBinary(rowBuf, fieldLength);
-    }
-
-    public float decodeFloat() throws SQLException {
-      return metadataList[fieldIndex].decodeFloatBinary(rowBuf, fieldLength);
-    }
-
-    public double decodeDouble() throws SQLException {
-      return metadataList[fieldIndex].decodeDoubleBinary(rowBuf, fieldLength);
-    }
-
-    public boolean wasNull() {
-      return (nullBitmap[(fieldIndex + 2) / 8] & (1 << ((fieldIndex + 2) % 8))) > 0;
-    }
-
-    /**
-     * Set length and pos indicator to asked index.
-     *
-     * @param newIndex index (0 is first).
-     */
-    @Override
-    public void setPosition(int newIndex) {
-
-      if (fieldIndex >= newIndex) {
-        fieldIndex = 0;
-        // skip header + null-bitmap
-        rowBuf.pos(1 + ((maxIndex + 9) / 8));
-      } else {
-        fieldIndex++;
-      }
-
-      while (fieldIndex < newIndex) {
-        if ((nullBitmap[(fieldIndex + 2) / 8] & (1 << ((fieldIndex + 2) % 8))) == 0) {
-          // skip bytes
-          switch (metadataList[fieldIndex].getType()) {
-            case BIGINT:
-            case DOUBLE:
-              rowBuf.skip(8);
-              break;
-
-            case INTEGER:
-            case MEDIUMINT:
-            case FLOAT:
-              rowBuf.skip(4);
-              break;
-
-            case SMALLINT:
-            case YEAR:
-              rowBuf.skip(2);
-              break;
-
-            case TINYINT:
-              rowBuf.skip(1);
-              break;
-
-            default:
-              rowBuf.skipLengthEncoded();
-              break;
-          }
-        }
-        fieldIndex++;
-      }
-
-      if (wasNull()) {
-        fieldLength = NULL_LENGTH;
-        return;
-      }
-
-      // read asked field position and length
-      switch (metadataList[fieldIndex].getType()) {
-        case BIGINT:
-        case DOUBLE:
-          fieldLength = 8;
-          return;
-
-        case INTEGER:
-        case MEDIUMINT:
-        case FLOAT:
-          fieldLength = 4;
-          return;
-
-        case SMALLINT:
-        case YEAR:
-          fieldLength = 2;
-          return;
-
-        case TINYINT:
-          fieldLength = 1;
-          return;
-
-        default:
-          // field with variable length
-          byte len = rowBuf.readByte();
-          switch (len) {
-            case (byte) 252:
-              // length is encoded on 3 bytes (0xfc header + 2 bytes indicating length)
-              fieldLength = rowBuf.readUnsignedShort();
-              return;
-
-            case (byte) 253:
-              // length is encoded on 4 bytes (0xfd header + 3 bytes indicating length)
-              fieldLength = rowBuf.readUnsignedMedium();
-              return;
-
-            case (byte) 254:
-              // length is encoded on 9 bytes (0xfe header + 8 bytes indicating length)
-              fieldLength = (int) rowBuf.readLong();
-              return;
-            default:
-              fieldLength = len & 0xff;
-              return;
-          }
-      }
-    }
   }
 }

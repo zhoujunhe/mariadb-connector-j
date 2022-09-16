@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @Warmup(iterations = 10, timeUnit = TimeUnit.SECONDS, time = 1)
 @Measurement(iterations = 10, timeUnit = TimeUnit.SECONDS, time = 1)
-@Fork(value = 1)
+@Fork(value = 5)
 @Threads(value = 1) // detecting CPU count
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.SECONDS)
