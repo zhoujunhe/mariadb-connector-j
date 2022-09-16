@@ -3,14 +3,26 @@ package org.mariadb.jdbc.client;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLDataException;
 import java.util.Calendar;
-
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.column.*;
 import org.mariadb.jdbc.client.impl.StandardReadableByteBuf;
 
 public interface ColumnDecoder extends Column {
+  String defaultClassname(Configuration conf);
 
-  Object getDefaultText(final ReadableByteBuf buf, final int length) throws SQLDataException;
-  Object getDefaultBinary(final ReadableByteBuf buf, final int length) throws SQLDataException;
+  int getColumnType(Configuration conf);
+
+  String getColumnTypeName(Configuration conf);
+
+  default int getPrecision() {
+    return (int) getColumnLength();
+  }
+
+  Object getDefaultText(final Configuration conf, final ReadableByteBuf buf, final int length)
+      throws SQLDataException;
+
+  Object getDefaultBinary(final Configuration conf, final ReadableByteBuf buf, final int length)
+      throws SQLDataException;
 
   String decodeStringText(final ReadableByteBuf buf, final int length, final Calendar cal)
       throws SQLDataException;
@@ -87,7 +99,10 @@ public interface ColumnDecoder extends Column {
     DataType dataType = DataType.of(buf.readUnsignedByte());
     int flags = buf.readUnsignedShort();
     byte decimals = buf.readByte();
-    return dataType.getColumnConstructor().create(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
+    return dataType
+        .getColumnConstructor()
+        .create(
+            buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
 
   static ColumnDecoder create(String name, DataType type, int flags) {
@@ -130,10 +145,8 @@ public interface ColumnDecoder extends Column {
         len = 1;
         break;
     }
-
-    switch (type) {
-      case INTEGER:
-        return new IntColumn(
+    return type.getColumnConstructor()
+        .create(
             new StandardReadableByteBuf(arr, arr.length),
             33,
             len,
@@ -143,32 +156,5 @@ public interface ColumnDecoder extends Column {
             stringPos,
             null,
             null);
-      case BIGINT:
-        return new BigIntColumn(
-            new StandardReadableByteBuf(arr, arr.length),
-            33,
-            len,
-            type,
-            (byte) 0,
-            flags,
-            stringPos,
-            null,
-            null);
-      case STRING:
-      case VARCHAR:
-      case VARSTRING:
-        return new StringColumn(
-            new StandardReadableByteBuf(arr, arr.length),
-            33,
-            len,
-            type,
-            (byte) 0,
-            flags,
-            stringPos,
-            null,
-            null);
-      default:
-        return null;
-    }
   }
 }

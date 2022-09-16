@@ -4,13 +4,14 @@
 
 package org.mariadb.jdbc.client.column;
 
+import java.sql.SQLDataException;
+import java.sql.Types;
+import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
-
-import java.sql.SQLDataException;
-import java.util.Calendar;
 
 /** Column metadata definition */
 public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
@@ -27,26 +28,65 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
       String extTypeFormat) {
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
+
+  public String defaultClassname(Configuration conf) {
+    if (conf.tinyInt1isBit() && columnLength == 1) return Boolean.class.getName();
+    return Integer.class.getName();
+  }
+
+  public int getColumnType(Configuration conf) {
+    if (conf.tinyInt1isBit() && columnLength == 1) {
+      return conf.transformedBitIsBoolean() ? Types.BOOLEAN : Types.BIT;
+    }
+    return isSigned() ? Types.TINYINT : Types.SMALLINT;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    if (conf.tinyInt1isBit() && columnLength == 1) {
+      return conf.transformedBitIsBoolean() ? "BOOLEAN" : "BIT";
+    }
+    return isSigned() ? "TINYINT" : "TINYINT UNSIGNED";
+  }
+
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (conf.tinyInt1isBit() && columnLength == 1) {
+      return decodeBooleanText(buf, length);
+    }
+    long result = buf.atoi(length);
+    if (isSigned()) {
+      return (int) result;
+    }
+    return (int) result;
+  }
+
+  @Override
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (conf.tinyInt1isBit() && columnLength == 1) {
+      return decodeBooleanBinary(buf, length);
+    }
+    if (isSigned()) {
+      return (int) buf.readByte();
+    }
+    return (int) buf.readUnsignedByte();
+  }
+
+  @Override
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     String s = buf.readAscii(length);
     return !"0".equals(s);
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return buf.readByte() != 0;
   }
 
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
-    if (isSigned())
-      return buf.readByte();
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = buf.atoi(length);
-
     if ((byte) result != result) {
       throw new SQLDataException("byte overflow");
     }
@@ -54,10 +94,8 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
-    if (isSigned())
-      return buf.readByte();
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
+    if (isSigned()) return buf.readByte();
     long result = buf.readUnsignedByte();
 
     if ((byte) result != result) {
@@ -83,16 +121,12 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
 
   @Override
   public short decodeShortText(ReadableByteBuf buf, int length) throws SQLDataException {
-    buf.skip(length);
-    throw new SQLDataException(
-            String.format("Data type %s cannot be decoded as Short", getType()));
+    return (short) buf.atoi(length);
   }
 
   @Override
   public short decodeShortBinary(ReadableByteBuf buf, int length) throws SQLDataException {
-    buf.skip(length);
-    throw new SQLDataException(
-            String.format("Data type %s cannot be decoded as Short", getType()));
+    return (isSigned() ? buf.readByte() : buf.readUnsignedByte());
   }
 
   @Override

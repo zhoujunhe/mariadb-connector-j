@@ -7,33 +7,30 @@ package org.mariadb.jdbc.unit.util;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.charset.StandardCharsets;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import org.junit.jupiter.api.Test;
 import org.mariadb.jdbc.util.ClientParser;
 
 @SuppressWarnings("ConstantConditions")
 public class ClientParserTest {
-  private static final String sql =
-      "select seq, 'abcdefghijabcdefghijabcdefghijaa' from seq_1_to_1000";
-
-  @Test
-  public void tt() throws Throwable {
-    try (Connection con = DriverManager.getConnection("jdbc:mariadb://localhost/testj?user=root")) {
-      for (int j = 0; j < 1000000; j++) {
-        try (PreparedStatement st = con.prepareStatement(sql)) {
-          ResultSet rs = st.executeQuery();
-          long i = 0;
-          while (rs.next()) {
-            i = rs.getLong(1);
-            rs.getString(2);
-          }
-        }
-      }
-    }
-  }
+  //  private static final String sql =
+  //      "select seq, 'abcdefghijabcdefghijabcdefghijaa' from seq_1_to_1000";
+  //
+  //  @Test
+  //  public void tt() throws Throwable {
+  //    try (Connection con =
+  // DriverManager.getConnection("jdbc:mariadb://localhost/testj?user=root")) {
+  //      for (int j = 0; j < 1000000; j++) {
+  //        try (PreparedStatement st = con.prepareStatement(sql)) {
+  //          ResultSet rs = st.executeQuery();
+  //          long i = 0;
+  //          while (rs.next()) {
+  //            i = rs.getLong(1);
+  //            rs.getString(2);
+  //          }
+  //        }
+  //      }
+  //    }
+  //  }
 
   private void parse(String sql, String[] expected, String[] expectedNoBackSlash) {
     ClientParser parser = ClientParser.parameterParts(sql, false);

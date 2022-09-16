@@ -4,16 +4,16 @@
 
 package org.mariadb.jdbc.client.column;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.SQLDataException;
+import java.sql.Types;
+import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
-
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.math.RoundingMode;
-import java.sql.SQLDataException;
-import java.util.Calendar;
 
 /** Column metadata definition */
 public class BigDecimalColumn extends ColumnDefinitionPacket implements ColumnDecoder {
@@ -30,48 +30,68 @@ public class BigDecimalColumn extends ColumnDefinitionPacket implements ColumnDe
       String extTypeFormat) {
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
+
+  public String defaultClassname(Configuration conf) {
+    return BigDecimal.class.getName();
+  }
+
+  public int getColumnType(Configuration conf) {
+    return Types.DECIMAL;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    return "DECIMAL";
+  }
+
+  public int getPrecision() {
+    // DECIMAL and OLDDECIMAL are  "exact" fixed-point number.
+    // so :
+    // - if is signed, 1 byte is saved for sign
+    // - if decimal > 0, one byte more for dot
+    if (isSigned()) {
+      return (int) (columnLength - ((decimals > 0) ? 2 : 1));
+    } else {
+      return (int) (columnLength - ((decimals > 0) ? 1 : 0));
+    }
+  }
+
   @Override
-  public Object getDefaultText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
     return new BigDecimal(buf.readAscii(length));
   }
 
   @Override
-  public Object getDefaultBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
     return new BigDecimal(buf.readAscii(length));
   }
 
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     return new BigDecimal(buf.readAscii(length)).intValue() != 0;
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return decodeBooleanText(buf, length);
   }
 
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     String str = buf.readString(length);
     try {
       return new BigDecimal(str).setScale(0, RoundingMode.DOWN).byteValueExact();
     } catch (NumberFormatException | ArithmeticException nfe) {
       throw new SQLDataException(
-              String.format("value '%s' (%s) cannot be decoded as Byte", str, getType()));
+          String.format("value '%s' (%s) cannot be decoded as Byte", str, dataType));
     }
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return decodeByteText(buf, length);
   }
-
 
   @Override
   public String decodeStringText(ReadableByteBuf buf, int length, Calendar cal)
@@ -123,7 +143,7 @@ public class BigDecimalColumn extends ColumnDefinitionPacket implements ColumnDe
 
   @Override
   public int decodeIntBinary(ReadableByteBuf buf, int length) throws SQLDataException {
-    return decodeIntText(buf,length);
+    return decodeIntText(buf, length);
   }
 
   @Override

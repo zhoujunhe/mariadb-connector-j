@@ -88,7 +88,7 @@ public class LocalDateCodec implements Codec<LocalDate> {
       case YEAR:
         short y = (short) buf.atoi(length);
 
-        if (length == 2 && column.getLength() == 2) {
+        if (length == 2 && column.getColumnLength() == 2) {
           // YEAR(2) - deprecated
           if (y <= 69) {
             y += 2000;
@@ -213,7 +213,7 @@ public class LocalDateCodec implements Codec<LocalDate> {
         if (length == 0) return null;
         year = buf.readUnsignedShort();
 
-        if (column.getLength() == 2) {
+        if (column.getColumnLength() == 2) {
           // YEAR(2) - deprecated
           if (year <= 69) {
             year += 2000;

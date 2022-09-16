@@ -4,10 +4,10 @@
 
 package org.mariadb.jdbc.client.column;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.SQLDataException;
+import java.sql.Types;
 import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
@@ -30,21 +30,49 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
 
+  public String defaultClassname(Configuration conf) {
+    return isSigned() ? Integer.class.getName() : Long.class.getName();
+  }
+
+  public int getColumnType(Configuration conf) {
+    return isSigned() ? Types.INTEGER : Types.BIGINT;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    return isSigned() ? "INTEGER" : "INTEGER UNSIGNED";
+  }
+
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (isSigned()) {
+      return (int) buf.atoi(length);
+    }
+    return buf.atoi(length);
+  }
+
+  @Override
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (isSigned()) {
+      return buf.readInt();
+    }
+    return buf.readUnsignedInt();
+  }
+
+  @Override
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     String s = buf.readAscii(length);
     return !"0".equals(s);
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return buf.readInt() != 0;
   }
+
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = buf.atoi(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
@@ -53,8 +81,7 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = isSigned() ? buf.readInt() : buf.readUnsignedInt();
     if ((byte) result != result) {
       throw new SQLDataException("byte overflow");
@@ -98,7 +125,16 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
 
   @Override
   public int decodeIntText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return (int) buf.atoi(length);
+    long result = buf.atoi(length);
+    if (isSigned()) {
+      return (int) result;
+    }
+
+    int res = (int) result;
+    if (res != result || result < 0) {
+      throw new SQLDataException("integer overflow");
+    }
+    return res;
   }
 
   @Override
@@ -127,7 +163,6 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
     }
     return buf.readInt();
   }
-
 
   @Override
   public float decodeFloatText(ReadableByteBuf buf, int length) throws SQLDataException {

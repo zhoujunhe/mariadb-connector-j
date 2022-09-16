@@ -20,7 +20,7 @@ public enum DataType {
   DATE(10, DateColumn::new),
   TIME(11, TimeColumn::new),
   DATETIME(12, TimestampColumn::new),
-  YEAR(13, SmallIntColumn::new),
+  YEAR(13, YearColumn::new),
   NEWDATE(14, DateColumn::new),
   VARCHAR(15, StringColumn::new),
   BIT(16, BitColumn::new),
@@ -34,7 +34,7 @@ public enum DataType {
   BLOB(252, BlobColumn::new),
   VARSTRING(253, StringColumn::new),
   STRING(254, StringColumn::new),
-  GEOMETRY(255, BlobColumn::new);
+  GEOMETRY(255, GeometryColumn::new);
 
   static final DataType[] typeMap;
 
@@ -68,15 +68,15 @@ public enum DataType {
   @FunctionalInterface
   public interface ColumnConstructor {
 
-    ColumnDecoder create(ReadableByteBuf buf,
-                         int charset,
-                         long length,
-                         DataType dataType,
-                         byte decimals,
-                         int flags,
-                         int[] stringPos,
-                         String extTypeName,
-                         String extTypeFormat);
-
+    ColumnDecoder create(
+        ReadableByteBuf buf,
+        int charset,
+        long length,
+        DataType dataType,
+        byte decimals,
+        int flags,
+        int[] stringPos,
+        String extTypeName,
+        String extTypeFormat);
   }
 }

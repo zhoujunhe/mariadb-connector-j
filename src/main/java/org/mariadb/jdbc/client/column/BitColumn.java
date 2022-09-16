@@ -4,15 +4,15 @@
 
 package org.mariadb.jdbc.client.column;
 
+import java.sql.SQLDataException;
+import java.sql.Types;
+import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
 import org.mariadb.jdbc.plugin.codec.ByteCodec;
-
-import java.math.BigInteger;
-import java.sql.SQLDataException;
-import java.util.Calendar;
 
 /** Column metadata definition */
 public class BitColumn extends ColumnDefinitionPacket implements ColumnDecoder {
@@ -29,54 +29,59 @@ public class BitColumn extends ColumnDefinitionPacket implements ColumnDecoder {
       String extTypeFormat) {
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
-  @Override
-  public Object getDefaultText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
-    //
+
+  public String defaultClassname(Configuration conf) {
+    return columnLength == 1 ? Boolean.class.getName() : "byte[]";
+  }
+
+  public int getColumnType(Configuration conf) {
+    return columnLength == 1 ? Types.BOOLEAN : Types.VARBINARY;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    return "BIT";
+  }
+
+  public int getPrecision() {
+    return (int) columnLength;
   }
 
   @Override
-  public Object getDefaultBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
-    if (isSigned() || (buf.getByte(buf.pos() + 7) & 0x80) == 0) {
-      return buf.readLong();
-    } else {
-      // error too big to return a long
-      byte[] bb = new byte[8];
-      for (int i = 7; i >= 0; i--) {
-        bb[i] = buf.readByte();
-      }
-      BigInteger val = new BigInteger(1, bb);
-      try {
-        return val.longValueExact();
-      } catch (ArithmeticException ae) {
-        throw new SQLDataException(String.format("value '%s' cannot be decoded as Long", val));
-      }
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (columnLength == 1) {
+      return ByteCodec.parseBit(buf, length) != 0;
     }
+    byte[] arr = new byte[length];
+    buf.readBytes(arr);
+    return arr;
   }
+
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    return getDefaultText(conf, buf, length);
+  }
+
+  @Override
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     return ByteCodec.parseBit(buf, length) != 0;
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return ByteCodec.parseBit(buf, length) != 0;
   }
 
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     byte val = buf.readByte();
     if (length > 1) buf.skip(length - 1);
     return val;
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return decodeByteText(buf, length);
   }
 
@@ -188,28 +193,24 @@ public class BitColumn extends ColumnDefinitionPacket implements ColumnDecoder {
   @Override
   public float decodeFloatText(ReadableByteBuf buf, int length) throws SQLDataException {
     buf.skip(length);
-    throw new SQLDataException(
-            String.format("Data type %s cannot be decoded as Float", getType()));
+    throw new SQLDataException(String.format("Data type %s cannot be decoded as Float", dataType));
   }
 
   @Override
   public float decodeFloatBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     buf.skip(length);
-    throw new SQLDataException(
-            String.format("Data type %s cannot be decoded as Float", getType()));
+    throw new SQLDataException(String.format("Data type %s cannot be decoded as Float", dataType));
   }
 
   @Override
   public double decodeDoubleText(ReadableByteBuf buf, int length) throws SQLDataException {
     buf.skip(length);
-    throw new SQLDataException(
-            String.format("Data type %s cannot be decoded as Double", getType()));
+    throw new SQLDataException(String.format("Data type %s cannot be decoded as Double", dataType));
   }
 
   @Override
   public double decodeDoubleBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     buf.skip(length);
-    throw new SQLDataException(
-            String.format("Data type %s cannot be decoded as Double", getType()));
+    throw new SQLDataException(String.format("Data type %s cannot be decoded as Double", dataType));
   }
 }

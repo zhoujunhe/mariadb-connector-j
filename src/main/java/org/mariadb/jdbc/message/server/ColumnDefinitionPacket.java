@@ -4,16 +4,11 @@
 
 package org.mariadb.jdbc.message.server;
 
-import java.sql.Types;
-import java.util.Locale;
 import java.util.Objects;
-import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.Column;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.ServerMessage;
-import org.mariadb.jdbc.plugin.Codec;
-import org.mariadb.jdbc.plugin.codec.*;
 import org.mariadb.jdbc.util.CharsetEncodingLength;
 import org.mariadb.jdbc.util.constants.ColumnFlags;
 
@@ -21,20 +16,20 @@ import org.mariadb.jdbc.util.constants.ColumnFlags;
 public class ColumnDefinitionPacket implements Column, ServerMessage {
 
   private final ReadableByteBuf buf;
-  private final int charset;
-  private final long length;
-  private final DataType dataType;
-  private final byte decimals;
+  protected final int charset;
+  protected final long columnLength;
+  protected final DataType dataType;
+  protected final byte decimals;
   private final int flags;
   private final int[] stringPos;
-  private final String extTypeName;
-  private final String extTypeFormat;
+  protected final String extTypeName;
+  protected final String extTypeFormat;
   private boolean useAliasAsName;
 
   public ColumnDefinitionPacket(
       ReadableByteBuf buf,
       int charset,
-      long length,
+      long columnLength,
       DataType dataType,
       byte decimals,
       int flags,
@@ -43,7 +38,7 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
       String extTypeFormat) {
     this.buf = buf;
     this.charset = charset;
-    this.length = length;
+    this.columnLength = columnLength;
     this.dataType = dataType;
     this.decimals = decimals;
     this.flags = flags;
@@ -56,16 +51,16 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
    * constructor for generated metadata
    *
    * @param buf buffer
-   * @param length length
+   * @param columnLength length
    * @param dataType server data type
    * @param stringPos string information position
    * @param flags columns flags
    */
   public ColumnDefinitionPacket(
-      ReadableByteBuf buf, long length, DataType dataType, int[] stringPos, int flags) {
+      ReadableByteBuf buf, long columnLength, DataType dataType, int[] stringPos, int flags) {
     this.buf = buf;
     this.charset = 33;
-    this.length = length;
+    this.columnLength = columnLength;
     this.dataType = dataType;
     this.decimals = (byte) 0;
     this.flags = flags;
@@ -124,7 +119,7 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
     this.buf = buf;
     buf.skip(); // skip length always 0x0c
     this.charset = buf.readShort();
-    this.length = buf.readInt();
+    this.columnLength = buf.readInt();
     this.dataType = DataType.of(buf.readUnsignedByte());
     this.flags = buf.readUnsignedShort();
     this.decimals = buf.readByte();
@@ -155,8 +150,8 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
     return buf.readString(buf.readIntLengthEncodedNotNull());
   }
 
-  public long getLength() {
-    return length;
+  public long getColumnLength() {
+    return columnLength;
   }
 
   public DataType getType() {
@@ -184,9 +179,9 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
             || dataType == DataType.MEDIUMBLOB
             || dataType == DataType.LONGBLOB)) {
       Integer maxWidth = CharsetEncodingLength.maxCharlen.get(charset);
-      if (maxWidth != null) return (int) (length / maxWidth);
+      if (maxWidth != null) return (int) (columnLength / maxWidth);
     }
-    return (int) length;
+    return (int) columnLength;
   }
 
   public boolean isPrimaryKey() {
@@ -215,282 +210,13 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
     return extTypeName;
   }
 
-  /**
-   * Return metadata precision.
-   *
-   * @return precision
-   */
-  public int getPrecision() {
-    switch (dataType) {
-      case OLDDECIMAL:
-      case DECIMAL:
-        // DECIMAL and OLDDECIMAL are  "exact" fixed-point number.
-        // so :
-        // - if is signed, 1 byte is saved for sign
-        // - if decimal > 0, one byte more for dot
-        if (isSigned()) {
-          return (int) (length - ((decimals > 0) ? 2 : 1));
-        } else {
-          return (int) (length - ((decimals > 0) ? 1 : 0));
-        }
-      case VARCHAR:
-      case JSON:
-      case ENUM:
-      case SET:
-      case VARSTRING:
-      case STRING:
-        Integer maxWidth = CharsetEncodingLength.maxCharlen.get(charset);
-        if (maxWidth == null) {
-          return (int) length;
-        }
-        return (int) (length / maxWidth);
-
-      case BLOB:
-      case TINYBLOB:
-      case MEDIUMBLOB:
-      case LONGBLOB:
-        if (!isBinary()) {
-          Integer maxWidth2 = CharsetEncodingLength.maxCharlen.get(charset);
-          if (maxWidth2 != null) return (int) (length / maxWidth2);
-        }
-        return (int) length;
-
-      default:
-        return (int) length;
-    }
-  }
-
-  public String getColumnTypeName(Configuration conf) {
-    switch (dataType) {
-      case TINYINT:
-        if (length == 1) {
-          return conf.transformedBitIsBoolean() ? "BOOLEAN" : "BIT";
-        }
-        if (!isSigned()) {
-          return dataType.name() + " UNSIGNED";
-        } else {
-          return dataType.name();
-        }
-      case SMALLINT:
-      case MEDIUMINT:
-      case INTEGER:
-      case BIGINT:
-        if (!isSigned()) {
-          return dataType.name() + " UNSIGNED";
-        } else {
-          return dataType.name();
-        }
-      case BLOB:
-      case TINYBLOB:
-      case MEDIUMBLOB:
-      case LONGBLOB:
-        /*
-         map to different blob types based on datatype length
-         see https://mariadb.com/kb/en/library/data-types/
-        */
-        if (extTypeFormat != null) {
-          return extTypeFormat.toUpperCase(Locale.ROOT);
-        }
-        if (isBinary()) {
-          if (length < 0) {
-            return "LONGBLOB";
-          } else if (length <= 255) {
-            return "TINYBLOB";
-          } else if (length <= 65535) {
-            return "BLOB";
-          } else if (length <= 16777215) {
-            return "MEDIUMBLOB";
-          } else {
-            return "LONGBLOB";
-          }
-        } else {
-          if (length < 0) {
-            return "LONGTEXT";
-          } else if (getDisplaySize() <= 65532) {
-            return "VARCHAR";
-          } else if (getDisplaySize() <= 65535) {
-            return "TEXT";
-          } else if (getDisplaySize() <= 16777215) {
-            return "MEDIUMTEXT";
-          } else {
-            return "LONGTEXT";
-          }
-        }
-      case VARSTRING:
-      case VARCHAR:
-        if (isBinary()) {
-          return "VARBINARY";
-        }
-        if (length < 0) {
-          return "LONGTEXT";
-        } else if (getDisplaySize() <= 65532) {
-          return "VARCHAR";
-        } else if (getDisplaySize() <= 65535) {
-          return "TEXT";
-        } else if (getDisplaySize() <= 16777215) {
-          return "MEDIUMTEXT";
-        } else {
-          return "LONGTEXT";
-        }
-      case STRING:
-        if (isBinary()) {
-          return "BINARY";
-        }
-        return "CHAR";
-      case GEOMETRY:
-        if (extTypeName != null) {
-          return extTypeName.toUpperCase(Locale.ROOT);
-        }
-        return dataType.name();
-      default:
-        return dataType.name();
-    }
-  }
-
-  public int getColumnType(Configuration conf) {
-    switch (dataType) {
-      case TINYINT:
-        if (length == 1) {
-          return conf.transformedBitIsBoolean() ? Types.BOOLEAN : Types.BIT;
-        }
-        return isSigned() ? Types.TINYINT : Types.SMALLINT;
-      case BIT:
-        if (length == 1) {
-          return Types.BOOLEAN;
-        }
-        return Types.VARBINARY;
-      case SMALLINT:
-        return isSigned() ? Types.SMALLINT : Types.INTEGER;
-      case INTEGER:
-        return isSigned() ? Types.INTEGER : Types.BIGINT;
-      case FLOAT:
-        return Types.REAL;
-      case DOUBLE:
-        return Types.DOUBLE;
-      case TIMESTAMP:
-      case DATETIME:
-        return Types.TIMESTAMP;
-      case BIGINT:
-        return Types.BIGINT;
-      case MEDIUMINT:
-        return Types.INTEGER;
-      case DATE:
-      case NEWDATE:
-        return Types.DATE;
-      case TIME:
-        return Types.TIME;
-      case YEAR:
-        if (conf.yearIsDateType()) return Types.DATE;
-        return Types.SMALLINT;
-      case JSON:
-        return Types.LONGVARCHAR;
-      case VARCHAR:
-      case ENUM:
-      case SET:
-      case VARSTRING:
-      case TINYBLOB:
-      case BLOB:
-        if (length <= 0 || getDisplaySize() > 16777215) {
-          return isBinary() ? Types.LONGVARBINARY : Types.LONGVARCHAR;
-        } else {
-          return isBinary() ? Types.VARBINARY : Types.VARCHAR;
-        }
-      case GEOMETRY:
-        return Types.VARBINARY;
-      case STRING:
-        return isBinary() ? Types.VARBINARY : Types.CHAR;
-      case OLDDECIMAL:
-      case DECIMAL:
-        return Types.DECIMAL;
-      case MEDIUMBLOB:
-      case LONGBLOB:
-        return isBinary() ? Types.LONGVARBINARY : Types.LONGVARCHAR;
-    }
-    return Types.NULL;
-  }
-
-  public Codec<?> getDefaultCodec(Configuration conf) {
-    switch (dataType) {
-      case JSON:
-        return StringCodec.INSTANCE;
-      case NULL:
-      case SET:
-      case ENUM:
-      case VARCHAR:
-      case VARSTRING:
-      case STRING:
-        return isBinary() ? ByteArrayCodec.INSTANCE : StringCodec.INSTANCE;
-      case TINYINT:
-        if (conf.tinyInt1isBit() && this.length == 1) return BooleanCodec.INSTANCE;
-        return IntCodec.INSTANCE;
-      case SMALLINT:
-        return isSigned() ? ShortCodec.INSTANCE : IntCodec.INSTANCE;
-      case INTEGER:
-        return isSigned() ? IntCodec.INSTANCE : LongCodec.INSTANCE;
-      case FLOAT:
-        return FloatCodec.INSTANCE;
-      case DOUBLE:
-        return DoubleCodec.INSTANCE;
-      case TIMESTAMP:
-      case DATETIME:
-        return TimestampCodec.INSTANCE;
-      case BIGINT:
-        return isSigned() ? LongCodec.INSTANCE : BigIntegerCodec.INSTANCE;
-      case MEDIUMINT:
-        return IntCodec.INSTANCE;
-      case DATE:
-      case NEWDATE:
-        return DateCodec.INSTANCE;
-      case OLDDECIMAL:
-      case DECIMAL:
-        return BigDecimalCodec.INSTANCE;
-      case GEOMETRY:
-        if (conf.geometryDefaultType() != null && "default".equals(conf.geometryDefaultType())) {
-          if (extTypeName != null) {
-            switch (extTypeName) {
-              case "point":
-                return PointCodec.INSTANCE;
-              case "linestring":
-                return LineStringCodec.INSTANCE;
-              case "polygon":
-                return PolygonCodec.INSTANCE;
-              case "multipoint":
-                return MultiPointCodec.INSTANCE;
-              case "multilinestring":
-                return MultiLinestringCodec.INSTANCE;
-              case "multipolygon":
-                return MultiPolygonCodec.INSTANCE;
-              case "geometrycollection":
-                return GeometryCollectionCodec.INSTANCE;
-            }
-          }
-          return GeometryCollectionCodec.INSTANCE;
-        }
-        return ByteArrayCodec.INSTANCE;
-      case TINYBLOB:
-      case MEDIUMBLOB:
-      case LONGBLOB:
-      case BLOB:
-        return isBinary() ? BlobCodec.INSTANCE : StringCodec.INSTANCE;
-      case TIME:
-        return TimeCodec.INSTANCE;
-      case YEAR:
-        if (conf.yearIsDateType()) return DateCodec.INSTANCE;
-        return ShortCodec.INSTANCE;
-      case BIT:
-        if (this.length == 1) return BooleanCodec.INSTANCE;
-        return ByteArrayCodec.INSTANCE;
-    }
-    throw new IllegalArgumentException(String.format("Unexpected datatype %s", dataType));
-  }
-
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
     ColumnDefinitionPacket that = (ColumnDefinitionPacket) o;
     return charset == that.charset
-        && length == that.length
+        && columnLength == that.columnLength
         && dataType == that.dataType
         && decimals == that.decimals
         && flags == that.flags;
@@ -498,7 +224,7 @@ public class ColumnDefinitionPacket implements Column, ServerMessage {
 
   @Override
   public int hashCode() {
-    return Objects.hash(charset, length, dataType, decimals, flags);
+    return Objects.hash(charset, columnLength, dataType, decimals, flags);
   }
 
   public void useAliasAsName() {

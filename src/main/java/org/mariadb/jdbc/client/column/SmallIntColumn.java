@@ -4,13 +4,14 @@
 
 package org.mariadb.jdbc.client.column;
 
+import java.sql.SQLDataException;
+import java.sql.Types;
+import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
-
-import java.sql.SQLDataException;
-import java.util.Calendar;
 
 /** Column metadata definition */
 public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
@@ -28,21 +29,50 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
 
+  public String defaultClassname(Configuration conf) {
+    return isSigned() ? Short.class.getName() : Integer.class.getName();
+  }
+
+  public int getColumnType(Configuration conf) {
+    return isSigned() ? Types.SMALLINT : Types.INTEGER;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    return isSigned() ? "SMALLINT" : "SMALLINT UNSIGNED";
+  }
+
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    long result = buf.atoi(length);
+    if (isSigned()) {
+      return (short) result;
+    }
+    return (int) result;
+  }
+
+  @Override
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (isSigned()) {
+      return buf.readShort();
+    }
+    return buf.readUnsignedShort();
+  }
+
+  @Override
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     String s = buf.readAscii(length);
     return !"0".equals(s);
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return buf.readShort() != 0;
   }
+
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = buf.atoi(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
@@ -51,10 +81,8 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = isSigned() ? buf.readShort() : buf.readUnsignedShort();
-    buf.skip(); // MEDIUMINT is encoded on 4 bytes in exchanges !
     if ((byte) result != result) {
       throw new SQLDataException("byte overflow");
     }

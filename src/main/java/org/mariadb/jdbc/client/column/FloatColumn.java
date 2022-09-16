@@ -4,15 +4,16 @@
 
 package org.mariadb.jdbc.client.column;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.SQLDataException;
+import java.sql.Types;
+import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
-
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.sql.SQLDataException;
-import java.util.Calendar;
 
 /** Column metadata definition */
 public class FloatColumn extends ColumnDefinitionPacket implements ColumnDecoder {
@@ -29,29 +30,51 @@ public class FloatColumn extends ColumnDefinitionPacket implements ColumnDecoder
       String extTypeFormat) {
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
+
+  public String defaultClassname(Configuration conf) {
+    return Float.class.getName();
+  }
+
+  public int getColumnType(Configuration conf) {
+    return Types.REAL;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    return "FLOAT";
+  }
+
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    return Float.parseFloat(buf.readAscii(length));
+  }
+
+  @Override
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    return buf.readFloat();
+  }
+
+  @Override
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     String s = buf.readAscii(length);
     return !"0".equals(s);
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return ((int) buf.readFloat()) != 0;
   }
 
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     long result;
     String str = buf.readString(length);
     try {
       result = new BigDecimal(str).setScale(0, RoundingMode.DOWN).byteValueExact();
     } catch (NumberFormatException | ArithmeticException nfe) {
       throw new SQLDataException(
-              String.format("value '%s' (%s) cannot be decoded as Byte", str, getType()));
+          String.format("value '%s' (%s) cannot be decoded as Byte", str, dataType));
     }
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
@@ -60,8 +83,7 @@ public class FloatColumn extends ColumnDefinitionPacket implements ColumnDecoder
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = (long) buf.readFloat();
     if ((byte) result != result) {
       throw new SQLDataException("byte overflow");
@@ -149,7 +171,6 @@ public class FloatColumn extends ColumnDefinitionPacket implements ColumnDecoder
     return (long) buf.readFloat();
   }
 
-
   @Override
   public float decodeFloatText(ReadableByteBuf buf, int length) throws SQLDataException {
     return Float.parseFloat(buf.readAscii(length));
@@ -159,6 +180,7 @@ public class FloatColumn extends ColumnDefinitionPacket implements ColumnDecoder
   public float decodeFloatBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return buf.readFloat();
   }
+
   @Override
   public double decodeDoubleText(ReadableByteBuf buf, int length) throws SQLDataException {
     return Double.parseDouble(buf.readAscii(length));

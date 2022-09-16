@@ -4,11 +4,11 @@
 
 package org.mariadb.jdbc.client.column;
 
-import java.math.BigDecimal;
 import java.math.BigInteger;
-import java.math.RoundingMode;
 import java.sql.SQLDataException;
+import java.sql.Types;
 import java.util.Calendar;
+import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
@@ -29,56 +29,55 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
       String extTypeFormat) {
     super(buf, charset, length, dataType, decimals, flags, stringPos, extTypeName, extTypeFormat);
   }
-  @Override
-  public Object getDefaultText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
-    if (isSigned() || length < 10) {
-      return buf.atoi(length);
-    } else {
-      BigInteger val = new BigInteger(buf.readAscii(length));
-      try {
-        return val.longValueExact();
-      } catch (ArithmeticException ae) {
-        throw new SQLDataException(String.format("value '%s' cannot be decoded as Long", val));
-      }
-    }
+
+  public String defaultClassname(Configuration conf) {
+    return isSigned() ? Long.class.getName() : BigInteger.class.getName();
+  }
+
+  public int getColumnType(Configuration conf) {
+    return Types.BIGINT;
+  }
+
+  public String getColumnTypeName(Configuration conf) {
+    return isSigned() ? "BIGINT" : "BIGINT UNSIGNED";
   }
 
   @Override
-  public Object getDefaultBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
-    if (isSigned() || (buf.getByte(buf.pos() + 7) & 0x80) == 0) {
-      return buf.readLong();
-    } else {
-      // error too big to return a long
-      byte[] bb = new byte[8];
-      for (int i = 7; i >= 0; i--) {
-        bb[i] = buf.readByte();
-      }
-      BigInteger val = new BigInteger(1, bb);
-      try {
-        return val.longValueExact();
-      } catch (ArithmeticException ae) {
-        throw new SQLDataException(String.format("value '%s' cannot be decoded as Long", val));
-      }
+  public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (isSigned()) {
+      return buf.atoi(length);
     }
+    return new BigInteger(buf.readAscii(length));
   }
+
   @Override
-  public boolean decodeBooleanText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public Object getDefaultBinary(final Configuration conf, ReadableByteBuf buf, int length)
+      throws SQLDataException {
+    if (isSigned()) {
+      return buf.readLong();
+    }
+    // need BIG ENDIAN, so reverse order
+    byte[] bb = new byte[8];
+    for (int i = 7; i >= 0; i--) {
+      bb[i] = buf.readByte();
+    }
+    return new BigInteger(1, bb);
+  }
+
+  @Override
+  public boolean decodeBooleanText(ReadableByteBuf buf, int length) throws SQLDataException {
     String s = buf.readAscii(length);
     return !"0".equals(s);
   }
 
   @Override
-  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public boolean decodeBooleanBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     return buf.readLong() != 0;
   }
 
   @Override
-  public byte decodeByteText(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
     long result = buf.atoi(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
@@ -87,8 +86,7 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
   }
 
   @Override
-  public byte decodeByteBinary(ReadableByteBuf buf, int length)
-          throws SQLDataException {
+  public byte decodeByteBinary(ReadableByteBuf buf, int length) throws SQLDataException {
     long result;
     if (isSigned()) {
       result = buf.readLong();
@@ -103,7 +101,7 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
         result = val.longValueExact();
       } catch (NumberFormatException | ArithmeticException nfe) {
         throw new SQLDataException(
-                String.format("value '%s' (%s) cannot be decoded as Byte", val, getType()));
+            String.format("value '%s' (%s) cannot be decoded as Byte", val, dataType));
       }
     }
     if ((byte) result != result) {
@@ -122,7 +120,16 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
   @Override
   public String decodeStringBinary(ReadableByteBuf buf, int length, Calendar cal)
       throws SQLDataException {
-    return buf.readString(length);
+    if (isSigned()) {
+      return BigInteger.valueOf(buf.readLong()).toString();
+    } else {
+      // need BIG ENDIAN, so reverse order
+      byte[] bb = new byte[8];
+      for (int i = 7; i >= 0; i--) {
+        bb[i] = buf.readByte();
+      }
+      return new BigInteger(1, bb).toString();
+    }
   }
 
   @Override
@@ -155,16 +162,27 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
 
   @Override
   public int decodeIntBinary(ReadableByteBuf buf, int length) throws SQLDataException {
-    if (isSigned()) {
-      return buf.readInt();
-    }
-    long result = buf.readUnsignedInt();
-    int res = (int) result;
-    if (res != result) {
-      throw new SQLDataException("integer overflow");
-    }
 
-    return res;
+    if (isSigned()) {
+      long result = buf.readLong();
+      int res = (int) result;
+      if (res != result) {
+        throw new SQLDataException("integer overflow");
+      }
+      return res;
+    } else {
+      // need BIG ENDIAN, so reverse order
+      byte[] bb = new byte[8];
+      for (int i = 7; i >= 0; i--) {
+        bb[i] = buf.readByte();
+      }
+      BigInteger val = new BigInteger(1, bb);
+      try {
+        return val.intValueExact();
+      } catch (ArithmeticException ae) {
+        throw new SQLDataException(String.format("value '%s' cannot be decoded as Integer", val));
+      }
+    }
   }
 
   @Override

@@ -16,6 +16,7 @@ import java.sql.*;
 import java.sql.Date;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
 import org.mariadb.jdbc.Configuration;
 import org.mariadb.jdbc.client.*;
 import org.mariadb.jdbc.client.impl.StandardReadableByteBuf;
@@ -51,14 +52,16 @@ public abstract class Result implements ResultSet, Completion {
   /** binary/text row decoder */
   protected final RowDecoder rowDecoder;
 
+  protected final Consumer<byte[]> setrow;
+
   /** data size */
   protected int dataSize = 0;
 
   /** rows */
   protected byte[][] data;
 
+  private byte[] nullBitmap;
   protected final StandardReadableByteBuf rowBuf = new StandardReadableByteBuf(null, 0);
-
   private int fieldLength;
 
   protected int fieldIndex;
@@ -114,7 +117,13 @@ public abstract class Result implements ResultSet, Completion {
     this.context = context;
     this.resultSetType = resultSetType;
     this.traceEnable = traceEnable;
-    rowDecoder = binaryProtocol ? new BinaryRowDecoder() : new TextRowDecoder();
+    if (binaryProtocol) {
+      rowDecoder = new BinaryRowDecoder();
+      setrow = this::setBinaryRowBuf;
+    } else {
+      rowDecoder = new TextRowDecoder();
+      setrow = this::setTextRowBuf;
+    }
   }
 
   /**
@@ -138,6 +147,7 @@ public abstract class Result implements ResultSet, Completion {
     this.closeOnCompletion = false;
     this.traceEnable = false;
     rowDecoder = new TextRowDecoder();
+    setrow = this::setTextRowBuf;
   }
 
   /**
@@ -359,14 +369,21 @@ public abstract class Result implements ResultSet, Completion {
    */
   protected void updateRowData(byte[] rawData) {
     data[rowPointer] = rawData;
-    rowBuf.buf(rawData, rawData == null ? 0 : rawData.length, 0);
-    fieldIndex = -1;
+    if (rawData == null) {
+      setNullRowBuf();
+    } else {
+      setrow.accept(rawData);
+      fieldIndex = -1;
+    }
   }
 
   private void checkIndex(int index) throws SQLException {
     if (index < 1 || index > maxIndex) {
       throw new SQLException(
           String.format("Wrong index position. Is %s but must be in 1-%s range", index, maxIndex));
+    }
+    if (rowBuf.buf == null) {
+      throw new SQLDataException("wrong row position", "22023");
     }
   }
 
@@ -687,7 +704,7 @@ public abstract class Result implements ResultSet, Completion {
     if (fieldLength == NULL_LENGTH) {
       return null;
     }
-    return rowDecoder.defaultDecode();
+    return rowDecoder.defaultDecode(context.getConf());
   }
 
   @Override
@@ -1183,7 +1200,7 @@ public abstract class Result implements ResultSet, Completion {
 
   @Override
   public Timestamp getTimestamp(String columnLabel, Calendar cal) throws SQLException {
-    return getTimestamp(findColumn(columnLabel));
+    return getTimestamp(findColumn(columnLabel), cal);
   }
 
   @Override
@@ -1505,7 +1522,9 @@ public abstract class Result implements ResultSet, Completion {
   }
 
   @Override
+  @SuppressWarnings("unchecked")
   public <T> T getObject(int columnIndex, Class<T> type) throws SQLException {
+    checkIndex(columnIndex);
     rowDecoder.setPosition(columnIndex - 1);
     Calendar calendar = null;
     if (wasNull()) {
@@ -1519,7 +1538,7 @@ public abstract class Result implements ResultSet, Completion {
     ColumnDecoder column = metadataList[columnIndex - 1];
     // type generic, return "natural" java type
     if (Object.class.equals(type) || type == null) {
-      return (T) rowDecoder.defaultDecode();
+      return (T) rowDecoder.defaultDecode(conf);
     }
 
     for (Codec<?> codec : conf.codecs()) {
@@ -1573,13 +1592,22 @@ public abstract class Result implements ResultSet, Completion {
     throw exceptionFactory.notSupported("Not supported when using CONCUR_READ_ONLY concurrency");
   }
 
-  protected void setRowBuf(byte[] row) {
+  protected void setNullRowBuf() {
+    rowBuf.buf(null, 0, 0);
+  }
+
+  private void setTextRowBuf(byte[] row) {
     rowBuf.buf(row, row.length, 0);
     fieldIndex = -1;
   }
 
-  protected void setNullRowBuf() {
-    rowBuf.buf(null, 0, 0);
+  private void setBinaryRowBuf(byte[] buf) {
+    nullBitmap = new byte[(maxIndex + 9) / 8];
+    for (int i = 0; i < nullBitmap.length; i++) {
+      nullBitmap[i] = buf[i + 1];
+    }
+    rowBuf.buf(buf, buf.length, 1 + nullBitmap.length);
+    fieldIndex = -1;
   }
 
   public int findColumn(String label) throws SQLException {
@@ -1614,7 +1642,7 @@ public abstract class Result implements ResultSet, Completion {
 
     <T> T decode(Codec<T> codec, Calendar calendar) throws SQLException;
 
-    Object defaultDecode() throws SQLException;
+    Object defaultDecode(Configuration conf) throws SQLException;
 
     byte decodeByte() throws SQLException;
 
@@ -1641,8 +1669,8 @@ public abstract class Result implements ResultSet, Completion {
     }
 
     @Override
-    public Object defaultDecode() throws SQLException {
-      return metadataList[fieldIndex].getDefaultText(rowBuf, fieldLength);
+    public Object defaultDecode(Configuration conf) throws SQLException {
+      return metadataList[fieldIndex].getDefaultText(conf, rowBuf, fieldLength);
     }
 
     @Override
@@ -1675,7 +1703,7 @@ public abstract class Result implements ResultSet, Completion {
     }
 
     public double decodeDouble() throws SQLException {
-      return metadataList[fieldIndex].decodeDoubleBinary(rowBuf, fieldLength);
+      return metadataList[fieldIndex].decodeDoubleText(rowBuf, fieldLength);
     }
 
     public boolean wasNull() {
@@ -1725,16 +1753,15 @@ public abstract class Result implements ResultSet, Completion {
 
   public class BinaryRowDecoder implements Result.RowDecoder {
 
-    private byte[] nullBitmap;
-
     public <T> T decode(Codec<T> codec, Calendar cal) throws SQLException {
       return codec.decodeBinary(rowBuf, fieldLength, metadataList[fieldIndex], cal);
     }
 
     @Override
-    public Object defaultDecode() throws SQLException {
-      return metadataList[fieldIndex].getDefaultBinary(rowBuf, fieldLength);
+    public Object defaultDecode(Configuration conf) throws SQLException {
+      return metadataList[fieldIndex].getDefaultBinary(conf, rowBuf, fieldLength);
     }
+
     public String decodeString() throws SQLException {
       return metadataList[fieldIndex].decodeStringBinary(rowBuf, fieldLength, null);
     }
@@ -1758,25 +1785,13 @@ public abstract class Result implements ResultSet, Completion {
     public long decodeLong() throws SQLException {
       return metadataList[fieldIndex].decodeLongBinary(rowBuf, fieldLength);
     }
+
     public float decodeFloat() throws SQLException {
       return metadataList[fieldIndex].decodeFloatBinary(rowBuf, fieldLength);
     }
 
     public double decodeDouble() throws SQLException {
       return metadataList[fieldIndex].decodeDoubleBinary(rowBuf, fieldLength);
-    }
-
-    public void setRow(byte[] buf) {
-      if (buf != null) {
-        nullBitmap = new byte[(maxIndex + 9) / 8];
-        for (int i = 0; i < nullBitmap.length; i++) {
-          nullBitmap[i] = buf[i + 1];
-        }
-        rowBuf.buf(buf, buf.length, 1 + nullBitmap.length);
-      } else {
-        rowBuf.buf(null, 0, 0);
-      }
-      fieldIndex = -1;
     }
 
     public boolean wasNull() {
