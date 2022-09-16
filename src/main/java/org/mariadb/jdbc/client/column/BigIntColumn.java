@@ -46,7 +46,7 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
   public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
       throws SQLDataException {
     if (isSigned()) {
-      return buf.atoi(length);
+      return buf.atoll(length);
     }
     return new BigInteger(buf.readAscii(length));
   }
@@ -78,7 +78,7 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
 
   @Override
   public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
     }
@@ -134,7 +134,7 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
 
   @Override
   public short decodeShortText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((short) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("Short overflow");
     }
@@ -152,7 +152,7 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
 
   @Override
   public int decodeIntText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     int res = (int) result;
     if (res != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("integer overflow");
@@ -188,9 +188,9 @@ public class BigIntColumn extends ColumnDefinitionPacket implements ColumnDecode
   @Override
   public long decodeLongText(ReadableByteBuf buf, int length) throws SQLDataException {
     if (isSigned()) {
-      return buf.atoi(length);
+      return buf.atoll(length);
     } else {
-      if (length < 10) return buf.atoi(length);
+      if (length < 10) return buf.atoull(length);
       BigInteger val = new BigInteger(buf.readAscii(length));
       try {
         return val.longValueExact();

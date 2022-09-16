@@ -66,7 +66,7 @@ public class MediumIntColumn extends ColumnDefinitionPacket implements ColumnDec
 
   @Override
   public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
     }
@@ -100,7 +100,7 @@ public class MediumIntColumn extends ColumnDefinitionPacket implements ColumnDec
 
   @Override
   public short decodeShortText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((short) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("Short overflow");
     }
@@ -119,7 +119,7 @@ public class MediumIntColumn extends ColumnDefinitionPacket implements ColumnDec
 
   @Override
   public int decodeIntText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return (int) buf.atoi(length);
+    return (int) buf.atoll(length);
   }
 
   @Override
@@ -131,7 +131,7 @@ public class MediumIntColumn extends ColumnDefinitionPacket implements ColumnDec
 
   @Override
   public long decodeLongText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return buf.atoi(length);
+    return buf.atoll(length);
   }
 
   @Override

@@ -12,7 +12,6 @@ import org.mariadb.jdbc.client.ColumnDecoder;
 import org.mariadb.jdbc.client.DataType;
 import org.mariadb.jdbc.client.ReadableByteBuf;
 import org.mariadb.jdbc.message.server.ColumnDefinitionPacket;
-import org.mariadb.jdbc.plugin.codec.*;
 
 /** Column metadata definition */
 public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
@@ -46,9 +45,9 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
   public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
       throws SQLDataException {
     if (isSigned()) {
-      return (int) buf.atoi(length);
+      return (int) buf.atoll(length);
     }
-    return buf.atoi(length);
+    return buf.atoull(length);
   }
 
   @Override
@@ -73,7 +72,7 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
 
   @Override
   public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
     }
@@ -107,7 +106,7 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
 
   @Override
   public short decodeShortText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((short) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("Short overflow");
     }
@@ -125,11 +124,10 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
 
   @Override
   public int decodeIntText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
     if (isSigned()) {
-      return (int) result;
+      return (int) buf.atoll(length);
     }
-
+    long result = buf.atoull(length);
     int res = (int) result;
     if (res != result || result < 0) {
       throw new SQLDataException("integer overflow");
@@ -153,7 +151,7 @@ public class IntColumn extends ColumnDefinitionPacket implements ColumnDecoder {
 
   @Override
   public long decodeLongText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return buf.atoi(length);
+    return buf.atoll(length);
   }
 
   @Override

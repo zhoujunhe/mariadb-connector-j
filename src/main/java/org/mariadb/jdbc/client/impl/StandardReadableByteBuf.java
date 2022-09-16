@@ -82,7 +82,7 @@ public final class StandardReadableByteBuf implements ReadableByteBuf {
     return MariaDbBlob.safeMariaDbBlob(buf, pos - length, length);
   }
 
-  public long atoi(int length) {
+  public long atoll(int length) {
     boolean negate = false;
     int idx = 0;
     long result = 0;
@@ -98,6 +98,17 @@ public final class StandardReadableByteBuf implements ReadableByteBuf {
     }
 
     return (negate) ? -1 * result : result;
+  }
+
+  public long atoull(int length) {
+    int idx = 0;
+    long result = 0;
+
+    while (idx++ < length) {
+      result = result * 10 + buf[pos++] - 48;
+    }
+
+    return result;
   }
 
   public byte getByte() {

@@ -86,7 +86,7 @@ public class LocalDateCodec implements Codec<LocalDate> {
     int[] parts;
     switch (column.getType()) {
       case YEAR:
-        short y = (short) buf.atoi(length);
+        short y = (short) buf.atoull(length);
 
         if (length == 2 && column.getColumnLength() == 2) {
           // YEAR(2) - deprecated

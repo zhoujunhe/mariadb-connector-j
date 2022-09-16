@@ -54,11 +54,7 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
     if (conf.tinyInt1isBit() && columnLength == 1) {
       return decodeBooleanText(buf, length);
     }
-    long result = buf.atoi(length);
-    if (isSigned()) {
-      return (int) result;
-    }
-    return (int) result;
+    return (int) buf.atoll(length);
   }
 
   @Override
@@ -86,7 +82,7 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
 
   @Override
   public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((byte) result != result) {
       throw new SQLDataException("byte overflow");
     }
@@ -121,7 +117,7 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
 
   @Override
   public short decodeShortText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return (short) buf.atoi(length);
+    return (short) buf.atoll(length);
   }
 
   @Override
@@ -131,7 +127,7 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
 
   @Override
   public int decodeIntText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return (int) buf.atoi(length);
+    return (int) buf.atoll(length);
   }
 
   @Override
@@ -141,7 +137,7 @@ public class TinyIntColumn extends ColumnDefinitionPacket implements ColumnDecod
 
   @Override
   public long decodeLongText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return buf.atoi(length);
+    return buf.atoll(length);
   }
 
   @Override

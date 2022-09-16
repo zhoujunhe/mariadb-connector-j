@@ -43,7 +43,7 @@ public class YearColumn extends SmallIntColumn {
   public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
       throws SQLDataException {
     if (conf.yearIsDateType()) {
-      short y = (short) buf.atoi(length);
+      short y = (short) buf.atoull(length);
       if (columnLength == 2) {
         // YEAR(2) - deprecated
         if (y <= 69) {

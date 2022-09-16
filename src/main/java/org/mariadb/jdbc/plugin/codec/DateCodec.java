@@ -58,7 +58,7 @@ public class DateCodec implements Codec<Date> {
 
     switch (column.getType()) {
       case YEAR:
-        short y = (short) buf.atoi(length);
+        short y = (short) buf.atoll(length);
         if (column.getColumnLength() == 2) {
           // YEAR(2) - deprecated
           if (y <= 69) {

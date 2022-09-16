@@ -44,11 +44,10 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
   @Override
   public Object getDefaultText(final Configuration conf, ReadableByteBuf buf, int length)
       throws SQLDataException {
-    long result = buf.atoi(length);
     if (isSigned()) {
-      return (short) result;
+      return (short) buf.atoll(length);
     }
-    return (int) result;
+    return (int) buf.atoull(length);
   }
 
   @Override
@@ -73,7 +72,7 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
 
   @Override
   public byte decodeByteText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
+    long result = buf.atoll(length);
     if ((byte) result != result || (result < 0 && !isSigned())) {
       throw new SQLDataException("byte overflow");
     }
@@ -106,8 +105,10 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
 
   @Override
   public short decodeShortText(ReadableByteBuf buf, int length) throws SQLDataException {
-    long result = buf.atoi(length);
-    if (isSigned()) return (short) result;
+    if (isSigned()) {
+      return (short) buf.atoll(length);
+    }
+    long result = buf.atoull(length);
     if ((short) result != result) {
       throw new SQLDataException("Short overflow");
     }
@@ -128,7 +129,7 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
 
   @Override
   public int decodeIntText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return (int) buf.atoi(length);
+    return (int) buf.atoll(length);
   }
 
   @Override
@@ -138,7 +139,7 @@ public class SmallIntColumn extends ColumnDefinitionPacket implements ColumnDeco
 
   @Override
   public long decodeLongText(ReadableByteBuf buf, int length) throws SQLDataException {
-    return buf.atoi(length);
+    return buf.atoll(length);
   }
 
   @Override
