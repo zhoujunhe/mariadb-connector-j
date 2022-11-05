@@ -815,7 +815,7 @@ public class MariaDbDatabaseMetaData implements DatabaseMetaData {
                     + (options.yearIsDateType ? "NUMERIC_SCALE" : "0")
                     + " WHEN 'tinyint' THEN "
                     + (options.tinyInt1isBit ? "0" : "NUMERIC_SCALE")
-                    + " ELSE NUMERIC_SCALE END, UNSIGNED INTEGER) DECIMAL_DIGITS,"
+                    + " ELSE NUMERIC_SCALE END, INTEGER) DECIMAL_DIGITS,"
                     + " 10 NUM_PREC_RADIX, IF(IS_NULLABLE = 'yes',1,0) NULLABLE,COLUMN_COMMENT REMARKS,"
                     + " COLUMN_DEFAULT COLUMN_DEF, 0 SQL_DATA_TYPE, 0 SQL_DATETIME_SUB,  "
                     + " LEAST(CHARACTER_OCTET_LENGTH,"
